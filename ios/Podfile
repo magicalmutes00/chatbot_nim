@@ -47,5 +47,17 @@ target 'NimChatApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Workaround for firebase-ios-sdk >= 12.13: the Firebase umbrella header
+    # includes <FirebaseAuth/FirebaseAuth-Swift.h>, which cannot be resolved
+    # when RNFirebase pods are built as static libraries, causing:
+    #   fatal error: 'FirebaseAuth/FirebaseAuth-Swift.h' file not found
+    # The include is only required by pure-Swift consumers; RNFirebase is
+    # ObjC++, so removing the line is safe. Re-applied on every pod install.
+    Dir[File.join(__dir__, 'Pods', '**', 'Firebase.h')].each do |umbrella|
+      content = File.read(umbrella)
+      patched = content.lines.reject { |line| line.include?('FirebaseAuth-Swift.h') }.join
+      File.write(umbrella, patched) if patched != content
+    end
   end
 end

@@ -12,6 +12,13 @@ require Pod::Executable.execute_command('node', ['-p',
 # Must be set before any target block / RNFirebase podspec evaluation.
 $RNFirebaseDisableSPM = true
 
+# Pin the firebase-ios-sdk family for ALL @react-native-firebase pods.
+# RNFB reads this env var in its podspecs (RNFBApp.podspec). 12.2.1 is the
+# last 12.x with the classic ObjC header layout: newer 12.x (12.13+) moved
+# FIRAuthErrorCode* behind a generated Swift header that does not resolve
+# when RNFirebase pods build as static libraries.
+ENV['FIREBASE_SDK_VERSION'] = '12.2.1'
+
 platform :ios, min_ios_version_supported
 prepare_react_native_project!
 
@@ -47,17 +54,5 @@ target 'NimChatApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
-
-    # Workaround for firebase-ios-sdk >= 12.13: the Firebase umbrella header
-    # includes <FirebaseAuth/FirebaseAuth-Swift.h>, which cannot be resolved
-    # when RNFirebase pods are built as static libraries, causing:
-    #   fatal error: 'FirebaseAuth/FirebaseAuth-Swift.h' file not found
-    # The include is only required by pure-Swift consumers; RNFirebase is
-    # ObjC++, so removing the line is safe. Re-applied on every pod install.
-    Dir[File.join(__dir__, 'Pods', '**', 'Firebase.h')].each do |umbrella|
-      content = File.read(umbrella)
-      patched = content.lines.reject { |line| line.include?('FirebaseAuth-Swift.h') }.join
-      File.write(umbrella, patched) if patched != content
-    end
   end
 end

@@ -75,6 +75,23 @@ jobs:
           rm -f Podfile.lock
           bundle exec pod install --repo-update
 
+      - name: Verify Firebase SDK pin
+        working-directory: ios
+        run: |
+          if ! grep -q "Firebase (12.2.1)" Podfile.lock; then
+            echo "::error::Firebase pin to 12.2.1 did not apply — check FIREBASE_SDK_VERSION in Podfile"
+            grep -A2 "^  - Firebase" Podfile.lock || true
+            exit 1
+          fi
+          echo "Firebase 12.2.1 pinned ✓"
+
+      - name: Upload Podfile.lock (commit this once green)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Podfile-lock
+          path: ios/Podfile.lock
+
       - name: Build for iOS Simulator (no code signing)
         run: |
           set -o pipefail

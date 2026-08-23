@@ -24,6 +24,16 @@ end
 target 'NimChatApp' do
   config = use_native_modules!
 
+  # With use_frameworks! :linkage => :static, Swift Firebase pods need module
+  # maps from their Objective-C dependencies. These pods don't emit them by
+  # default, so enable modular headers for exactly those listed by
+  # `pod install` (avoids the heavier global use_modular_headers!).
+  pod 'GoogleUtilities', :modular_headers => true
+  pod 'RecaptchaInterop', :modular_headers => true
+  pod 'FirebaseAuthInterop', :modular_headers => true
+  pod 'FirebaseAppCheckInterop', :modular_headers => true
+  pod 'FirebaseFirestoreInternal', :modular_headers => true
+
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.

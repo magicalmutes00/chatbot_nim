@@ -5,6 +5,13 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
+# React Native Firebase resolves firebase-ios-sdk via Swift Package Manager by
+# default. SPM products are automatic libraries, so with static framework
+# linkage every RNFirebase pod embeds its own Firebase copy and the duplicates
+# collide at link time. Force classic CocoaPods resolution instead.
+# Must be set before any target block / RNFirebase podspec evaluation.
+$RNFirebaseDisableSPM = true
+
 platform :ios, min_ios_version_supported
 prepare_react_native_project!
 

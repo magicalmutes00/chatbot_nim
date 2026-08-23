@@ -61,19 +61,19 @@ jobs:
           XML
           fi
 
-      - name: Cache CocoaPods
-        uses: actions/cache@v4
-        with:
-          path: ios/Pods
-          key: pods-${{ runner.os }}-${{ hashFiles('ios/Podfile.lock') }}
-          restore-keys: pods-${{ runner.os }}-
-
-      - name: Install CocoaPods
+      - name: Install CocoaPods (clean)
         working-directory: ios
         run: |
           bundle config set --local path vendor/bundle
           bundle install --jobs 4
-          bundle exec pod install
+          # Clean installation. Required after enabling $RNFirebaseDisableSPM:
+          # react-native-firebase leaves stale SPM wiring in Pods/ and
+          # Podfile.lock from previous installs, which pod install alone does
+          # not repair. No JS lockfiles are touched.
+          pod deintegrate || true
+          rm -rf Pods
+          rm -f Podfile.lock
+          bundle exec pod install --repo-update
 
       - name: Build for iOS Simulator (no code signing)
         run: |

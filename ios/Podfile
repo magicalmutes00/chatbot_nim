@@ -13,11 +13,12 @@ require Pod::Executable.execute_command('node', ['-p',
 $RNFirebaseDisableSPM = true
 
 # Pin the firebase-ios-sdk family for ALL @react-native-firebase pods.
-# RNFB reads this env var in its podspecs (RNFBApp.podspec). 12.2.1 is the
-# last 12.x with the classic ObjC header layout: newer 12.x (12.13+) moved
-# FIRAuthErrorCode* behind a generated Swift header that does not resolve
-# when RNFirebase pods build as static libraries.
-ENV['FIREBASE_SDK_VERSION'] = '12.2.1'
+# RNFB reads this env var in its podspecs (RNFBApp.podspec). 12.2.0 is the
+# last early-12.x with the classic ObjC header layout: newer 12.x (12.13+)
+# moved FIRAuthErrorCode* behind a generated Swift header that does not
+# resolve when RNFirebase pods build as static libraries.
+# NOTE: 12.2.1 does not exist as a published pod version.
+ENV['FIREBASE_SDK_VERSION'] = '12.2.0'
 
 platform :ios, min_ios_version_supported
 prepare_react_native_project!

@@ -1,34 +1,34 @@
 import { Platform } from 'react-native';
 
 /**
- * Glass UI design tokens. Keep all magic numbers here so screens stay readable.
- * Background is intentionally dark — that's what makes the translucent surfaces
- * read as "glass" instead of "white card".
+ * Light "glass on white" design tokens. Background is white per product
+ * direction; the frosted-glass treatment lives only in buttons (GlassButton).
+ * Translucent fills/borders are tuned so surfaces stay readable over white.
  */
 export const colors = {
   // base background layers (top to bottom in GlassBackground)
-  bgBase: '#0a0e27',
-  bgBaseAlt: '#070a1d',
-  blob1: '#6e3aff', // purple
-  blob2: '#3acfd5', // cyan
-  blob3: '#ff5ea8', // pink
+  bgBase: '#ffffff',
+  bgBaseAlt: '#f4f6fa',
+  blob1: '#eef1ff', // pastel lavender (unused by default background)
+  blob2: '#e8f7f8', // pastel cyan
+  blob3: '#ffeef5', // pastel pink
 
   // text
-  textPrimary: '#ffffff',
-  textSecondary: 'rgba(255,255,255,0.65)',
-  textMuted: 'rgba(255,255,255,0.40)',
+  textPrimary: '#0d1220',
+  textSecondary: 'rgba(13,18,32,0.62)',
+  textMuted: 'rgba(13,18,32,0.38)',
 
   // accents
-  accent: '#5ce4ff',
-  accentSoft: 'rgba(92,228,255,0.18)',
-  danger: '#ff5470',
+  accent: '#0a6cff',
+  accentSoft: 'rgba(10,108,255,0.12)',
+  danger: '#ff3b5c',
 
-  // glass surface layers (translucent overlay on top of BlurView)
-  glassLight: 'rgba(255,255,255,0.10)',
-  glassLighter: 'rgba(255,255,255,0.06)',
-  glassDark: 'rgba(8,12,40,0.45)',
-  glassBorder: 'rgba(255,255,255,0.18)',
-  glassBorderSubtle: 'rgba(255,255,255,0.10)',
+  // surface layers (translucent fills over white)
+  glassLight: 'rgba(255,255,255,0.78)',
+  glassLighter: 'rgba(244,246,250,0.88)',
+  glassDark: 'rgba(248,249,252,0.94)',
+  glassBorder: 'rgba(13,18,32,0.14)',
+  glassBorderSubtle: 'rgba(13,18,32,0.07)',
 };
 
 export const radius = {
@@ -49,9 +49,7 @@ export const spacing = {
 };
 
 /**
- * BlurView intensity that looks good on each platform.
- * iOS native blur is strong — lower numbers. Android RenderEffect blur is weaker
- * — push higher. Tints are still required for readability over colorful blobs.
+ * BlurView intensity per platform. Kept for the button glass effect only.
  */
 export const blurIntensity = {
   card: Platform.OS === 'ios' ? 22 : 45,

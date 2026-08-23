@@ -178,10 +178,11 @@ export default function ChatScreen({ route, navigation }: Props) {
         onReasoningToken: appendReasoningToken,
         onDone: async (fullText, fullReasoning) => {
           finishStreaming();
+          const savedContent = fullText || fullReasoning?.trim() || '(empty response)';
           const assistantMsg: ChatMessage = {
             id: `local-assistant-${Date.now()}`,
             role: 'assistant',
-            content: fullText || '(empty response)',
+            content: savedContent,
             reasoningContent: fullReasoning || undefined,
             model: selectedModel,
             createdAt: Date.now(),
@@ -189,30 +190,55 @@ export default function ChatScreen({ route, navigation }: Props) {
           setOptimistic((prev) => [...prev, assistantMsg]);
           scrollToEnd();
           try {
-            await addMessage(user.uid, chatId, {
-              role: 'assistant',
-              content: fullText,
-              reasoningContent: fullReasoning || undefined,
-              model: selectedModel,
-            });
-          } catch {
-            // Reply stays visible via the optimistic copy even if saving fails.
+            // NOTE: never pass explicit `undefined` fields to firestore —
+            // RNFirebase throws "Unsupported field value: undefined".
+            const assistantPayload: {
+              role: 'assistant';
+              content: string;
+              model: string;
+              reasoningContent?: string;
+            } = { role: 'assistant', content: savedContent, model: selectedModel };
+            if (fullReasoning) assistantPayload.reasoningContent = fullReasoning;
+            await addMessage(user.uid, chatId, assistantPayload);
+            console.log('[ChatScreen] assistant reply persisted');
+          } catch (e: any) {
+            console.log('[ChatScreen] assistant save FAILED:', e?.code ?? e?.message ?? e);
+            setError('Reply could not be saved.');
           }
         },
         onError: (err, partial) => {
           setError(err.message);
-          if (partial.fullText) {
+          console.log('[ChatScreen] stream error:', err.message);
+          if (partial.fullText || partial.fullReasoning) {
             setOptimistic((prev) => [
               ...prev,
               {
                 id: `local-assistant-${Date.now()}`,
                 role: 'assistant',
-                content: partial.fullText,
+                content: partial.fullText || partial.fullReasoning?.trim() || '(partial response)',
                 reasoningContent: partial.fullReasoning || undefined,
                 model: selectedModel,
                 createdAt: Date.now(),
               },
             ]);
+            // Persist whatever arrived so it survives app restarts.
+            const chatIdNow = activeChatId ?? passedChatId;
+            if (user && chatIdNow) {
+              const partialPayload: {
+                role: 'assistant';
+                content: string;
+                model: string;
+                reasoningContent?: string;
+              } = {
+                role: 'assistant',
+                content: partial.fullText || partial.fullReasoning?.trim() || '(partial response)',
+                model: selectedModel,
+              };
+              if (partial.fullReasoning) partialPayload.reasoningContent = partial.fullReasoning;
+              addMessage(user.uid, chatIdNow, partialPayload).catch((e) =>
+                console.log('[ChatScreen] partial save FAILED:', e?.code ?? e),
+              );
+            }
           }
         },
       },
@@ -222,7 +248,9 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const renderItem = ({ item }: { item: ChatMessage }) => (
     <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-      <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>{item.content}</Text>
+      <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>
+        {item.role === 'assistant' ? stripMarkdown(item.content) : item.content}
+      </Text>
       {item.reasoningContent && showReasoning ? (
         <Text style={styles.reasoning}>{item.reasoningContent}</Text>
       ) : null}
@@ -260,7 +288,7 @@ export default function ChatScreen({ route, navigation }: Props) {
 
         {isStreaming && (
           <View style={[styles.bubble, styles.assistantBubble]}>
-            {!!streamingText && <Text style={styles.assistantText}>{streamingText}</Text>}
+            {!!streamingText && <Text style={styles.assistantText}>{stripMarkdown(streamingText)}</Text>}
             {streamingReasoning ? (
               <Pressable onPress={() => setShowReasoning((v) => !v)}>
                 <Text style={styles.reasoningToggle}>
@@ -330,6 +358,11 @@ export default function ChatScreen({ route, navigation }: Props) {
       </KeyboardAvoidingView>
     </GlassBackground>
   );
+}
+
+/** Removes markdown bold markers (and stray **) that models emit in plain text. */
+function stripMarkdown(text: string): string {
+  return text.replace(/\*\*([^*]*)\*\*/g, '$1').replace(/\*\*/g, '');
 }
 
 const styles = StyleSheet.create({

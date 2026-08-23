@@ -12,7 +12,36 @@
           "package_name": "com.nimchatapp"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "927019487925-1415uetoba0ralm7hdqlpvf978tk2g2t.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nimchatapp",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "927019487925-ii2of25onc7vg5e0upsqe6lv1csb8i77.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nimchatapp",
+            "certificate_hash": "7a0b2845efa387ba808837bfd4dcac8207b84918"
+          }
+        },
+        {
+          "client_id": "927019487925-mst2spb2mdk3epnss1v2s36aap8m8h9g.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nimchatapp",
+            "certificate_hash": "0fc17248e67a7eedd53ae2a5c8a6d1770ff552b5"
+          }
+        },
+        {
+          "client_id": "927019487925-n4gaechj7qace8l7kfdfpaoe88743iqh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCMCc7GbUubtrwtFfxJx4e6c8SSzgSKUKw"
@@ -20,7 +49,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "927019487925-n4gaechj7qace8l7kfdfpaoe88743iqh.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "927019487925-rh96075ljq5nlmsbhistktkb6ehlqm9e.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.nimchatapp"
+              }
+            }
+          ]
         }
       }
     }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View, Pressable, ViewStyle } from 'react-native';
-import { GlassSurface } from './GlassSurface';
+import { BlurView } from '@react-native-community/blur';
 import { colors, radius } from '../theme/glass';
 
 interface GlassButtonProps {
@@ -12,6 +12,11 @@ interface GlassButtonProps {
   style?: ViewStyle;
 }
 
+/**
+ * The only frosted-glass element in the UI: a BlurView pill with a
+ * translucent overlay and hairline border. Everything else in the app is a
+ * plain white/light surface.
+ */
 export function GlassButton({
   title,
   onPress,
@@ -26,13 +31,17 @@ export function GlassButton({
     variant === 'primary'
       ? colors.accentSoft
       : variant === 'destructive'
-        ? 'rgba(255,84,112,0.18)'
+        ? 'rgba(255,59,92,0.14)'
         : pressed
-          ? 'rgba(255,255,255,0.18)'
-          : 'transparent';
+          ? 'rgba(13,18,32,0.08)'
+          : 'rgba(255,255,255,0.35)';
 
   const tint =
-    variant === 'primary' ? colors.accent : variant === 'destructive' ? colors.danger : colors.textPrimary;
+    variant === 'primary'
+      ? colors.accent
+      : variant === 'destructive'
+        ? colors.danger
+        : colors.textPrimary;
 
   return (
     <Pressable
@@ -45,25 +54,47 @@ export function GlassButton({
         style,
       ]}
     >
-      <GlassSurface
-        radius={radius.pill}
-        tone={variant === 'ghost' ? 'lighter' : 'light'}
-        border
-        shadow={variant !== 'ghost'}
-        intensity={variant === 'ghost' ? 30 : 40}
-        style={{ borderRadius: radius.pill }}
+      <View
+        style={[
+          styles.pill,
+          variant !== 'ghost' && styles.pillShadow,
+          { borderColor: variant === 'ghost' ? colors.glassBorderSubtle : colors.glassBorder },
+        ]}
       >
+        <BlurView
+          blurType="light"
+          blurAmount={30}
+          reducedTransparencyFallbackColor="#ffffff"
+          style={StyleSheet.absoluteFill}
+        />
         <View style={[styles.inner, { backgroundColor: overlay }]}>
           <Text style={[styles.label, { color: tint }]} numberOfLines={1}>
             {loading ? '…' : title}
           </Text>
         </View>
-      </GlassSurface>
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  inner: { paddingVertical: 14, paddingHorizontal: 22, alignItems: 'center', borderRadius: radius.pill },
+  pill: {
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pillShadow: {
+    shadowColor: '#0d1220',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  inner: {
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+    borderRadius: radius.pill,
+  },
   label: { fontSize: 16, fontWeight: '600', letterSpacing: 0.2 },
 });

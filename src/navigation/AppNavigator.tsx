@@ -34,7 +34,7 @@ export default function AppNavigator() {
       <GlassBackground>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={{ color: colors.textPrimary, marginTop: 16, letterSpacing: 2 }}>NIMCHAT</Text>
+          <Text style={{ color: colors.textPrimary, marginTop: 16, letterSpacing: 2 }}>TRISENTRIC AI</Text>
         </View>
       </GlassBackground>
     )
@@ -61,7 +61,7 @@ export default function AppNavigator() {
         <authStack.Navigator
           screenOptions={{
             headerShown: true,
-            title: 'NIMCHAT',
+            title: 'Trisentric AI',
             headerTitleStyle: { color: colors.textPrimary },
             headerTintColor: colors.textPrimary,
           }}

@@ -1,0 +1,105 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build iOS (simulator, debug)
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Restore .env from secrets
+        env:
+          NVAPI_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          if [ -n "$NVAPI_KEY" ]; then
+            echo "NVIDIA_API_KEY=$NVAPI_KEY" > .env
+          else
+            echo "::warning::NVIDIA_API_KEY secret not set — using placeholder"
+            cp .env.example .env
+          fi
+
+      - name: Restore GoogleService-Info.plist from secrets
+        env:
+          PLIST_B64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          if [ -n "$PLIST_B64" ]; then
+            echo "$PLIST_B64" | base64 --decode > ios/NimChatApp/GoogleService-Info.plist
+          else
+            echo "::warning::GOOGLE_SERVICE_INFO_PLIST secret not set — writing stub (build OK, Firebase won't init at runtime)"
+            cat > ios/NimChatApp/GoogleService-Info.plist <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>BUNDLE_ID</key><string>com.nimchatapp</string>
+            <key>PROJECT_ID</key><string>stub-project</string>
+            <key>STUB</key><true/>
+          </dict>
+          </plist>
+          XML
+          fi
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('ios/Podfile.lock') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: |
+          bundle config set --local path vendor/bundle
+          bundle install --jobs 4
+          bundle exec pod install
+
+      - name: Build for iOS Simulator (no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/NimChatApp.xcworkspace \
+            -scheme NimChatApp \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO \
+            build \
+            | tee xcodebuild.log
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: NimChatApp-simulator-debug
+          path: ios/build/Build/Products/Debug-iphonesimulator/NimChatApp.app
+          retention-days: 7
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7

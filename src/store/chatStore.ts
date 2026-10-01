@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { DEFAULT_MODEL_ID } from '../config/nimModels';
+import { DEFAULT_MODEL_ID, FLUX_ASPECT_RATIOS, type AspectRatioOption } from '../config/nimModels';
 import type { ChatMessage } from '../types/chat';
 
 interface ChatUiState {
   activeChatId: string | null;
   selectedModel: string;
+  imageAspect: AspectRatioOption;
   messages: ChatMessage[];
   streamingText: string;
   streamingReasoning: string;
@@ -13,6 +14,7 @@ interface ChatUiState {
 
   setActiveChatId: (id: string | null) => void;
   setSelectedModel: (model: string) => void;
+  setImageAspect: (aspect: AspectRatioOption) => void;
   setMessages: (messages: ChatMessage[]) => void;
   startStreaming: () => void;
   appendStreamToken: (delta: string) => void;
@@ -25,6 +27,7 @@ interface ChatUiState {
 export const useChatStore = create<ChatUiState>((set) => ({
   activeChatId: null,
   selectedModel: DEFAULT_MODEL_ID,
+  imageAspect: FLUX_ASPECT_RATIOS[0],
   messages: [],
   streamingText: '',
   streamingReasoning: '',
@@ -33,6 +36,8 @@ export const useChatStore = create<ChatUiState>((set) => ({
 
   setActiveChatId: (id) => set({ activeChatId: id }),
   setSelectedModel: (model) => set({ selectedModel: model }),
+  // Session-sticky on purpose: reset() (per chat entry) keeps the choice.
+  setImageAspect: (imageAspect) => set({ imageAspect }),
   setMessages: (messages) => set({ messages }),
   startStreaming: () => set({ isStreaming: true, streamingText: '', streamingReasoning: '', error: null }),
   appendStreamToken: (delta) => set((s) => ({ streamingText: s.streamingText + delta })),

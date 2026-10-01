@@ -28,6 +28,8 @@ export interface ThemeColors {
   accent: string;
   accentSoft: string;
   accentGlow: string;
+  gradientPrimary: [string, string]; // primary buttons, orbs, FAB, user bubbles
+  heroGradient: [string, string]; // page-top wash, fades to transparent
 
   // Lime in dark, readable olive-lime in light — highlights & accent text
   accent2: string;
@@ -55,6 +57,8 @@ export const themes: Record<ThemeMode, ThemeColors> = {
     accent: '#2457ff',
     accentSoft: 'rgba(36, 87, 255, 0.18)',
     accentGlow: 'rgba(36, 87, 255, 0.40)',
+    gradientPrimary: ['#2457ff', '#1636b8'],
+    heroGradient: ['rgba(36, 87, 255, 0.30)', 'rgba(36, 87, 255, 0)'],
 
     accent2: '#c8ff3f',
     accent2Soft: 'rgba(200, 255, 63, 0.12)',
@@ -79,6 +83,8 @@ export const themes: Record<ThemeMode, ThemeColors> = {
     accent: '#2457ff',
     accentSoft: 'rgba(36, 87, 255, 0.12)',
     accentGlow: 'rgba(36, 87, 255, 0.30)',
+    gradientPrimary: ['#2457ff', '#1a3fd1'],
+    heroGradient: ['rgba(36, 87, 255, 0.14)', 'rgba(36, 87, 255, 0)'],
 
     accent2: '#4d7c0f',
     accent2Soft: 'rgba(77, 124, 15, 0.12)',

@@ -6,6 +6,7 @@ export interface ChatMessage {
   content: string;
   reasoningContent?: string; // optional, from NIM's `reasoning_content`
   imageUri?: string; // data URI or URL — set when an image model produced the reply
+  imageAspect?: number; // width/height of the generated image, for display
   model: string;
   createdAt: number; // ms epoch, mirrors Firestore serverTimestamp on read
 }

@@ -87,6 +87,7 @@ export function subscribeToMessages(
         content: data.content,
         reasoningContent: data.reasoningContent,
         imageUri: data.imageUri,
+        imageAspect: data.imageAspect,
         model: data.model,
         createdAt: toMillis(data.createdAt),
       };

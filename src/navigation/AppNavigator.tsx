@@ -1,9 +1,11 @@
 import React from 'react'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { Text, View, StyleSheet } from 'react-native'
+import LinearGradient from 'react-native-linear-gradient'
 import { useAuth } from '../contexts/AuthContext'
 import { Background } from '../components/Background'
+import { TypingDots } from '../components/TypingDots'
 import { useTheme } from '../theme/ThemeContext'
 import LoginScreen from '../screens/LoginScreen'
 import SignupScreen from '../screens/SignupScreen'
@@ -28,6 +30,19 @@ const authStack = createNativeStackNavigator<AuthStackParamList>()
 
 const mainStack = createNativeStackNavigator<MainStackParamList>()
 
+const stylesLoader = StyleSheet.create({
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  orb: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  orbText: { color: '#ffffff', fontSize: 30, fontWeight: '800' },
+  brand: { marginTop: 16, marginBottom: 10, fontSize: 13, fontWeight: '700', letterSpacing: 3 },
+})
+
 export default function AppNavigator() {
   const { user, initializing } = useAuth()
   const { colors } = useTheme()
@@ -35,9 +50,17 @@ export default function AppNavigator() {
   if (initializing) {
     return (
       <Background>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={{ color: colors.textPrimary, marginTop: 16, letterSpacing: 2 }}>TRISENTRIC AI</Text>
+        <View style={stylesLoader.loadingWrap}>
+          <LinearGradient
+            colors={colors.gradientPrimary}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={stylesLoader.orb}
+          >
+            <Text style={stylesLoader.orbText}>{'T'}</Text>
+          </LinearGradient>
+          <Text style={[stylesLoader.brand, { color: colors.textPrimary }]}>TRISENTRIC AI</Text>
+          <TypingDots color={colors.accent2} />
         </View>
       </Background>
     )

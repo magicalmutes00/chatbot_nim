@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, View, ViewProps } from 'react-native';
 import { radius } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeContext';
@@ -24,24 +24,16 @@ export function Surface({
   const { colors } = useTheme();
   const fill =
     tone === 'bar' ? colors.surfaceBar : tone === 'muted' ? colors.surfaceMuted : colors.surface;
-  const borderColor = border ? colors.border : 'transparent';
+  const borderColorStyle = useMemo(() => ({ borderColor: colors.border }), [colors.border]);
 
   return (
     <View
       style={[
-        {
-          borderRadius: r,
-          backgroundColor: fill,
-          borderWidth: border ? StyleSheet.hairlineWidth : 0,
-          borderColor,
-        },
-        shadow && {
-          shadowColor: '#050b1c',
-          shadowOpacity: 0.25,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 2,
-        },
+        styles.base,
+        { backgroundColor: fill, borderRadius: r },
+        border ? styles.hairline : styles.noBorder,
+        borderColorStyle,
+        shadow && styles.shadow,
         style,
       ]}
       {...rest}
@@ -50,3 +42,16 @@ export function Surface({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  base: {},
+  hairline: { borderWidth: StyleSheet.hairlineWidth },
+  noBorder: { borderWidth: 0 },
+  shadow: {
+    shadowColor: '#050b1c',
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+});

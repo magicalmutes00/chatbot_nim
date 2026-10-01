@@ -1,5 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Image,
+} from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,68 +59,67 @@ export default function LoginScreen({ navigation }: Props) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <View style={styles.brand}>
+        <LinearGradient colors={colors.heroGradient} style={styles.hero}>
           <Image source={Logo} style={styles.logoImage} resizeMode="contain" />
           <Text style={styles.brandSub}>
             Chat with NVIDIA NIM models — {NIM_MODELS.length} available
           </Text>
-        </View>
+        </LinearGradient>
 
-        <View style={styles.card}>
-          <Text style={styles.heading}>Welcome back</Text>
-          <Text style={styles.subheading}>Sign in to continue your conversations</Text>
+        <View style={styles.cardWrap}>
+          <View style={styles.card}>
+            <Text style={styles.heading}>Welcome back</Text>
+            <Text style={styles.subheading}>Sign in to continue your conversations</Text>
 
-          <View style={{ height: spacing.lg }} />
-          <Input
-            label="Email"
-            placeholder="you@example.com"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <View style={{ height: spacing.md }} />
-          <Input
-            label="Password"
-            placeholder="••••••••"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+            <View style={styles.gapLg} />
+            <Input
+              label="Email"
+              placeholder="you@example.com"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+            <View style={styles.gapMd} />
+            <Input
+              label="Password"
+              placeholder="••••••••"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <View style={{ height: spacing.lg }} />
-          <Button title={loading ? 'Signing in…' : 'Sign in'} onPress={handleLogin} loading={loading} />
+            <View style={styles.gapLg} />
+            <Button title={loading ? 'Signing in…' : 'Sign in'} onPress={handleLogin} loading={loading} />
 
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or</Text>
-            <View style={styles.dividerLine} />
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <Button
+              title="Continue with Google"
+              onPress={handleGoogleSignIn}
+              loading={googleLoading}
+              variant="secondary"
+            />
+
+            <Pressable onPress={() => navigation.navigate('ForgotPassword')} hitSlop={8} style={styles.forgot}>
+              <Text style={styles.link}>Forgot password?</Text>
+            </Pressable>
           </View>
 
-          <Button
-            title="Continue with Google"
-            onPress={handleGoogleSignIn}
-            loading={googleLoading}
-            variant="secondary"
-          />
-
-          <Pressable onPress={() => navigation.navigate('ForgotPassword')} hitSlop={8} style={styles.forgot}>
-            <Text style={styles.link}>Forgot password?</Text>
+          <Pressable onPress={() => navigation.navigate('Signup')} hitSlop={8} style={styles.footnoteWrap}>
+            <Text style={styles.footnote}>
+              New here? <Text style={styles.link}>Create an account</Text>
+            </Text>
           </Pressable>
         </View>
-
-        <Pressable onPress={() => navigation.navigate('Signup')} hitSlop={8} style={{ marginTop: spacing.xl }}>
-          <Text style={styles.footnote}>
-            New here? <Text style={styles.link}>Create an account</Text>
-          </Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -118,35 +127,40 @@ export default function LoginScreen({ navigation }: Props) {
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-  scroll: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.bgBaseAlt },
-  brand: { alignItems: 'center', marginBottom: spacing.xxl },
-  logoImage: { width: 200, height: 60, marginBottom: spacing.md, alignSelf: 'center' },
-  brandTitle: {
-    color: colors.textPrimary,
-    fontSize: 40,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  brandSub: { color: colors.accent2, marginTop: 4, fontSize: 13, letterSpacing: 0.2, fontWeight: '500' },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderSubtle,
-    padding: spacing.xl,
-    shadowColor: '#0d1220',
-    shadowOpacity: 0.05,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  heading: { color: colors.textPrimary, fontSize: 24, fontWeight: '700' },
-  subheading: { color: colors.textSecondary, marginTop: 4, fontSize: 14 },
-  error: { color: colors.danger, marginTop: spacing.md, fontSize: 13 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.lg },
-  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  dividerText: { color: colors.textMuted, marginHorizontal: spacing.md, fontSize: 12 },
-  forgot: { alignItems: 'center', marginTop: spacing.lg },
-  footnote: { color: colors.textSecondary, textAlign: 'center', fontSize: 14 },
-  link: { color: colors.accent2, fontWeight: '600' },
-});
+    screen: { flex: 1, backgroundColor: colors.bgBaseAlt },
+    scroll: { flexGrow: 1 },
+    hero: {
+      alignItems: 'center',
+      paddingTop: spacing.xxl * 3,
+      paddingBottom: spacing.xxl + spacing.lg,
+      paddingHorizontal: spacing.xl,
+    },
+    logoImage: { width: 200, height: 60, marginBottom: spacing.md },
+    brandSub: { color: colors.accent2, fontSize: 13, letterSpacing: 0.2, fontWeight: '500' },
+    cardWrap: { flex: 1, paddingHorizontal: spacing.xl },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+      padding: spacing.xl,
+      marginTop: -spacing.xl - 4,
+      shadowColor: '#050b1c',
+      shadowOpacity: 0.35,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 6,
+    },
+    gapLg: { height: spacing.lg },
+    gapMd: { height: spacing.md },
+    heading: { color: colors.textPrimary, fontSize: 26, fontWeight: '800', letterSpacing: -0.4 },
+    subheading: { color: colors.textSecondary, marginTop: 5, fontSize: 14 },
+    error: { color: colors.danger, marginTop: spacing.md, fontSize: 13 },
+    dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.lg },
+    dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+    dividerText: { color: colors.textMuted, marginHorizontal: spacing.md, fontSize: 12 },
+    forgot: { alignItems: 'center', marginTop: spacing.lg },
+    footnoteWrap: { alignItems: 'center', marginTop: spacing.xl, marginBottom: spacing.xxl },
+    footnote: { color: colors.textSecondary, textAlign: 'center', fontSize: 14 },
+    link: { color: colors.accent2, fontWeight: '700' },
+  });

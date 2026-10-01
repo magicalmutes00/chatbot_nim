@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   FlatList,
@@ -8,14 +8,15 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   Animated,
   Easing,
   Image,
   Clipboard,
   ToastAndroid,
   Alert,
+  ScrollView,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,9 +31,9 @@ import {
 } from '../services/firestoreChats';
 import { ensureGalleryPermission, saveImageToGallery } from '../services/imageSave';
 import { Background } from '../components/Background';
+import { TypingDots } from '../components/TypingDots';
 import { radius, spacing, type ThemeColors } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeContext';
-import Logo from '../assets/logo.png';
 import type { ChatMessage } from '../types/chat';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Chat'>;
@@ -41,13 +42,14 @@ const PANEL_WIDTH = 290;
 
 export default function ChatScreen({ route, navigation }: Props) {
   const { user } = useAuth();
-  const passedChatId = route.params?.chatId;
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const passedChatId = route.params?.chatId;
 
   const {
     activeChatId,
     selectedModel,
+    imageAspect,
     messages,
     streamingText,
     streamingReasoning,
@@ -55,6 +57,7 @@ export default function ChatScreen({ route, navigation }: Props) {
     error,
     setActiveChatId,
     setSelectedModel,
+    setImageAspect,
     setMessages,
     startStreaming,
     appendStreamToken,
@@ -63,6 +66,8 @@ export default function ChatScreen({ route, navigation }: Props) {
     setError,
     reset,
   } = useChatStore();
+
+  const isImageModel = getModelById(selectedModel)?.kind === 'image';
 
   const [input, setInput] = useState('');
   const [showReasoning, setShowReasoning] = useState(false);
@@ -176,7 +181,7 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
 
     // Image models take a prompt, not chat history — run that flow instead.
-    if (getModelById(selectedModel)?.kind === 'image') {
+    if (isImageModel) {
       await runImageGeneration(text, chatId, user.uid);
       return;
     }
@@ -218,9 +223,7 @@ export default function ChatScreen({ route, navigation }: Props) {
             } = { role: 'assistant', content: savedContent, model: selectedModel };
             if (fullReasoning) assistantPayload.reasoningContent = fullReasoning;
             await addMessage(user.uid, chatId, assistantPayload);
-            console.log('[ChatScreen] assistant reply persisted');
-          } catch (e: any) {
-            console.log('[ChatScreen] assistant save FAILED:', e?.code ?? e?.message ?? e);
+          } catch {
             setError('Reply could not be saved.');
           }
         },
@@ -229,10 +232,8 @@ export default function ChatScreen({ route, navigation }: Props) {
           if (cancelled) {
             // User-initiated stop — not an error; keep whatever arrived.
             finishStreaming();
-            console.log('[ChatScreen] stream stopped by user');
           } else {
             setError(err.message);
-            console.log('[ChatScreen] stream error:', err.message);
           }
           if (partial.fullText || partial.fullReasoning) {
             setOptimistic((prev) => [
@@ -260,15 +261,74 @@ export default function ChatScreen({ route, navigation }: Props) {
                 model: selectedModel,
               };
               if (partial.fullReasoning) partialPayload.reasoningContent = partial.fullReasoning;
-              addMessage(user.uid, chatIdNow, partialPayload).catch((e) =>
-                console.log('[ChatScreen] partial save FAILED:', e?.code ?? e),
-              );
+              addMessage(user.uid, chatIdNow, partialPayload).catch(() => {});
             }
           }
         },
       },
       controller.signal,
     );
+  };
+
+  /** Image-model flow: one prompt in, one image back (no streaming tokens). */
+  const runImageGeneration = async (prompt: string, chatId: string, uid: string) => {
+    startStreaming();
+    setImageBusy(true);
+    scrollToEnd();
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const uri = await generateImage(
+        {
+          model: selectedModel,
+          prompt,
+          width: imageAspect.width,
+          height: imageAspect.height,
+        },
+        controller.signal,
+      );
+      const assistantMsg: ChatMessage = {
+        id: `local-assistant-${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        imageUri: uri,
+        imageAspect: imageAspect.width / imageAspect.height,
+        model: selectedModel,
+        createdAt: Date.now(),
+      };
+      setOptimistic((prev) => [...prev, assistantMsg]);
+      scrollToEnd();
+
+      // Firestore docs cap at 1 MiB — skip persisting oversized images.
+      const persistable = uri.length <= 700_000;
+      try {
+        const payload: {
+          role: 'assistant';
+          content: string;
+          model: string;
+          imageUri?: string;
+          imageAspect?: number;
+        } = {
+          role: 'assistant',
+          content: persistable ? '' : '(image shown this session only — too large to save)',
+          model: selectedModel,
+          imageAspect: imageAspect.width / imageAspect.height,
+        };
+        if (persistable) payload.imageUri = uri;
+        await addMessage(uid, chatId, payload);
+      } catch {
+        setError('Image could not be saved.');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        setError(e?.message ?? 'Image generation failed');
+      }
+    } finally {
+      setImageBusy(false);
+      finishStreaming();
+    }
   };
 
   const copyMessage = (text: string) => {
@@ -308,94 +368,65 @@ export default function ChatScreen({ route, navigation }: Props) {
     }
   };
 
-  /** Image-model flow: one prompt in, one image back (no streaming tokens). */
-  const runImageGeneration = async (prompt: string, chatId: string, uid: string) => {
-    startStreaming();
-    setImageBusy(true);
-    scrollToEnd();
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const uri = await generateImage({ model: selectedModel, prompt }, controller.signal);
-      const assistantMsg: ChatMessage = {
-        id: `local-assistant-${Date.now()}`,
-        role: 'assistant',
-        content: '',
-        imageUri: uri,
-        model: selectedModel,
-        createdAt: Date.now(),
-      };
-      setOptimistic((prev) => [...prev, assistantMsg]);
-      scrollToEnd();
-
-      // Firestore docs cap at 1 MiB — skip persisting oversized images.
-      const persistable = uri.length <= 700_000;
-      try {
-        const payload: {
-          role: 'assistant';
-          content: string;
-          model: string;
-          imageUri?: string;
-        } = {
-          role: 'assistant',
-          content: persistable ? '' : '(image shown this session only — too large to save)',
-          model: selectedModel,
-        };
-        if (persistable) payload.imageUri = uri;
-        await addMessage(uid, chatId, payload);
-      } catch {
-        setError('Image could not be saved.');
-      }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        setError(e?.message ?? 'Image generation failed');
-      }
-    } finally {
-      setImageBusy(false);
-      finishStreaming();
-    }
-  };
-
-  const renderItem = ({ item }: { item: ChatMessage }) => (
-    <Pressable
-      onLongPress={() => copyMessage(item.content)}
-      style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}
-    >
-      {item.imageUri ? (
-        <>
-          <Image source={{ uri: item.imageUri }} style={styles.messageImage} resizeMode="cover" />
-          {item.imageUri.startsWith('data:') ? (
-            <Pressable
-              disabled={savingId === item.id}
-              onPress={() => handleSaveImage(item)}
-              style={styles.saveBtn}
-            >
-              <Text style={styles.saveBtnText}>
-                {savingId === item.id ? 'Saving…' : 'Save image'}
+  const renderItem = useCallback(
+    ({ item, index }: { item: ChatMessage; index: number }) => {
+      const newDay =
+        index === 0 || dayKey(visibleMessages[index - 1].createdAt) !== dayKey(item.createdAt);
+      return (
+        <View>
+          {newDay ? <Text style={styles.dateSep}>{dayLabel(item.createdAt)}</Text> : null}
+          <Pressable
+            onLongPress={() => copyMessage(item.content)}
+            style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}
+          >
+            {item.role === 'assistant' && !item.imageUri ? (
+              <View style={styles.assistantAccent} />
+            ) : null}
+            {item.imageUri ? (
+              <>
+                <Image
+                  source={{ uri: item.imageUri }}
+                  style={[styles.messageImage, { aspectRatio: item.imageAspect ?? 1 }]}
+                  resizeMode="cover"
+                />
+                {item.imageUri.startsWith('data:') ? (
+                  <Pressable
+                    disabled={savingId === item.id}
+                    onPress={() => handleSaveImage(item)}
+                    style={styles.saveBtn}
+                  >
+                    <Text style={styles.saveBtnText}>
+                      {savingId === item.id ? 'Saving…' : 'Save image'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </>
+            ) : null}
+            {item.content ? (
+              <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>
+                {item.role === 'assistant' ? stripMarkdown(item.content) : item.content}
               </Text>
-            </Pressable>
-          ) : null}
-        </>
-      ) : null}
-      {item.content ? (
-        <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>
-          {item.role === 'assistant' ? stripMarkdown(item.content) : item.content}
-        </Text>
-      ) : null}
-      {item.reasoningContent && showReasoning ? (
-        <Text style={styles.reasoning}>{item.reasoningContent}</Text>
-      ) : null}
-      <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
-    </Pressable>
+            ) : null}
+            {item.reasoningContent && showReasoning ? (
+              <Text style={styles.reasoning}>{item.reasoningContent}</Text>
+            ) : null}
+            <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
+          </Pressable>
+        </View>
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [styles, visibleMessages, showReasoning, savingId],
   );
 
   const renderEmpty = () => (
     <View style={styles.emptyWrap}>
+      <Text style={styles.emptyGlyph}>{'✦'}</Text>
       <Text style={styles.emptyTitle}>How can I help today?</Text>
       <Text style={styles.emptyHint}>
-        Ask anything — replies stream in as they're generated. Long-press a reply to copy it.
+        {isImageModel
+          ? 'Describe an image, pick a ratio below, then tap Create.'
+          : 'Ask anything — replies stream in as they are generated. Long-press a reply to copy it.'}
       </Text>
       <Text style={styles.emptyModel}>Model: {getModelById(selectedModel)?.label ?? selectedModel}</Text>
     </View>
@@ -408,18 +439,24 @@ export default function ChatScreen({ route, navigation }: Props) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
-        {/* Top bar: back + logo + model picker trigger */}
+        {/* Top bar: back + model picker trigger */}
         <View style={styles.topBar}>
-          <Pressable hitSlop={10} onPress={() => navigation.goBack()}>
+          <Pressable
+            hitSlop={10}
+            onPress={() => navigation.goBack()}
+            accessibilityLabel="Go back"
+            style={styles.backChip}
+          >
             <Text style={styles.backIcon}>{'‹'}</Text>
           </Pressable>
-          <Image source={Logo} style={styles.headerLogo} resizeMode="contain" />
           <Pressable style={styles.modelBtn} onPress={openPanel}>
+            {isImageModel ? <View style={styles.modelDot} /> : null}
             <Text numberOfLines={1} style={styles.modelLabel}>
               {getModelById(selectedModel)?.label ?? 'Model'}
             </Text>
             <Text style={styles.chevron}>{'▾'}</Text>
           </Pressable>
+          <View style={styles.backChip} />
         </View>
 
         <FlatList
@@ -430,10 +467,15 @@ export default function ChatScreen({ route, navigation }: Props) {
           contentContainerStyle={styles.list}
           onContentSizeChange={scrollToEnd}
           ListEmptyComponent={isStreaming ? undefined : renderEmpty}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={11}
+          removeClippedSubviews
         />
 
         {isStreaming && (
-          <View style={[styles.bubble, styles.assistantBubble]}>
+          <View style={[styles.bubble, styles.assistantBubble, styles.streamingBubble]}>
+            <View style={styles.assistantAccent} />
             {imageBusy ? <Text style={styles.assistantText}>Generating image…</Text> : null}
             {!!streamingText && <Text style={styles.assistantText}>{stripMarkdown(streamingText)}</Text>}
             {streamingReasoning ? (
@@ -446,19 +488,44 @@ export default function ChatScreen({ route, navigation }: Props) {
             {showReasoning && streamingReasoning ? (
               <Text style={styles.reasoning}>{streamingReasoning}</Text>
             ) : null}
-            <ActivityIndicator size="small" color={colors.accent2} style={{ marginTop: 4 }} />
+            <TypingDots color={colors.accent2} />
           </View>
         )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {/* Input bar */}
-        <View style={styles.inputBar}>
+        {/* Aspect ratio picker for image models */}
+        {isImageModel && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.ratioRow}
+            contentContainerStyle={styles.ratioRowContent}
+          >
+            {(getModelById(selectedModel)?.aspectRatios ?? []).map((r) => (
+              <Pressable
+                key={r.label}
+                onPress={() => setImageAspect(r)}
+                style={[styles.ratioChip, imageAspect.label === r.label && styles.ratioChipActive]}
+              >
+                <Text
+                  style={[
+                    styles.ratioChipText,
+                    imageAspect.label === r.label && styles.ratioChipTextActive,
+                  ]}
+                >
+                  {r.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* Composer */}
+        <View style={styles.composer}>
           <TextInput
             style={styles.input}
-            placeholder={
-              getModelById(selectedModel)?.kind === 'image' ? 'Describe the image…' : 'Message'
-            }
+            placeholder={isImageModel ? 'Describe the image…' : 'Message'}
             placeholderTextColor={colors.textMuted}
             value={input}
             onChangeText={setInput}
@@ -470,23 +537,31 @@ export default function ChatScreen({ route, navigation }: Props) {
               onPress={() => abortRef.current?.abort()}
               accessibilityLabel="Stop generating"
             >
-              <Text style={styles.stopBtnText}>Stop</Text>
+              <View style={styles.stopSquare} />
             </Pressable>
           ) : (
             <Pressable
-              style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.8 }]}
               onPress={handleSend}
+              accessibilityLabel="Send"
             >
-              <Text style={styles.sendBtnText}>
-                {getModelById(selectedModel)?.kind === 'image' ? 'Create' : 'Send'}
-              </Text>
+              <LinearGradient
+                colors={colors.gradientPrimary}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <Text style={styles.sendBtnText}>{'➤'}</Text>
             </Pressable>
           )}
         </View>
 
         {/* Model picker slide-over */}
         {panelOpen && <Pressable style={styles.backdrop} onPress={closePanel} />}
-        <Animated.View style={[styles.panel, { transform: [{ translateX: panelX }] }]} pointerEvents={panelOpen ? 'auto' : 'none'}>
+        <Animated.View
+          style={[styles.panel, { transform: [{ translateX: panelX }] }]}
+          pointerEvents={panelOpen ? 'auto' : 'none'}
+        >
           <Text style={styles.panelTitle}>Choose model</Text>
           {NIM_MODELS.map((m) => (
             <Pressable
@@ -535,175 +610,274 @@ function formatTime(ts: number): string {
   return `${h}:${m} ${h24 >= 12 ? 'pm' : 'am'}`;
 }
 
+function dayKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function dayLabel(ts: number): string {
+  const now = new Date();
+  const d = new Date(ts);
+  if (dayKey(ts) === dayKey(now.getTime())) return 'Today';
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (dayKey(ts) === dayKey(yesterday.getTime())) return 'Yesterday';
+  return d.toLocaleDateString();
+}
+
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-  container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: spacing.xxl + spacing.md,
-    paddingBottom: spacing.sm,
-    paddingHorizontal: spacing.lg,
-  },
-  backIcon: { color: colors.textPrimary, fontSize: 30, lineHeight: 34, marginRight: 4 },
-  headerLogo: { width: 80, height: 24 },
-  modelBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderColor: colors.borderSubtle,
-    borderWidth: 1,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    maxWidth: '70%',
-  },
-  modelLabel: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', flexShrink: 1 },
-  chevron: { color: colors.textMuted, marginLeft: 6, fontSize: 12 },
-  list: { padding: spacing.md, paddingBottom: spacing.lg },
-  bubble: { borderRadius: radius.lg, padding: spacing.md, marginVertical: 4, maxWidth: '85%' },
-  userBubble: {
-    backgroundColor: colors.accentSoft,
-    alignSelf: 'flex-end',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  assistantBubble: {
-    backgroundColor: colors.surface,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-  },
-  userText: { color: colors.textPrimary },
-  assistantText: { color: colors.textPrimary },
-  reasoning: { color: colors.textSecondary, fontStyle: 'italic', marginTop: 6, fontSize: 12 },
-  reasoningToggle: { color: colors.accent2, fontSize: 12, marginTop: 6 },
-  time: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 10, marginTop: 4 },
-  messageImage: {
-    width: '100%',
-    aspectRatio: 1,
-    borderRadius: radius.sm,
-    marginTop: 2,
-  },
-  saveBtn: {
-    alignSelf: 'flex-end',
-    marginTop: 6,
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
-  },
-  saveBtnText: { color: colors.accent2, fontSize: 12, fontWeight: '600' },
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xxl * 2, paddingTop: 120 },
-  emptyTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '700', textAlign: 'center' },
-  emptyHint: { color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: spacing.sm, lineHeight: 19 },
-  emptyModel: {
-    color: colors.accent2,
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: spacing.lg,
-    backgroundColor: colors.accent2Soft,
-    borderColor: colors.borderSubtle,
-    borderWidth: 1,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-  },
-  error: { color: colors.danger, padding: spacing.sm, textAlign: 'center', fontSize: 12 },
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: spacing.sm,
-    backgroundColor: colors.surfaceBar,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSubtle,
-  },
-  input: {
-    flex: 1,
-    color: colors.textPrimary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === 'ios' ? 8 : 6,
-    maxHeight: 120,
-    fontSize: 15,
-  },
-  sendBtn: {
-    marginLeft: spacing.sm,
-    backgroundColor: colors.accent,
-    borderWidth: 1,
-    borderColor: colors.accentGlow,
-    borderRadius: radius.pill,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  sendBtnText: { color: colors.textPrimary, fontWeight: '600' },
-  stopBtn: {
-    marginLeft: spacing.sm,
-    backgroundColor: 'rgba(255,92,106,0.14)',
-    borderWidth: 1,
-    borderColor: colors.danger,
-    borderRadius: radius.pill,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  stopBtnText: { color: colors.danger, fontWeight: '600' },
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  panel: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: PANEL_WIDTH,
-    backgroundColor: colors.bgBaseAlt,
-    borderLeftWidth: 1,
-    borderLeftColor: colors.borderSubtle,
-    paddingTop: spacing.xxl * 2,
-    paddingHorizontal: spacing.md,
-    elevation: 12,
-  },
-  panelTitle: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    marginBottom: spacing.md,
-  },
-  panelItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.md,
-    borderRadius: radius.md,
-    marginBottom: spacing.xs,
-  },
-  panelItemSelected: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.accent },
-  panelItemText: { flex: 1 },
-  panelItemLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
-  panelItemDesc: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  panelBadge: {
-    color: colors.accent2,
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginLeft: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.accent2,
-    borderRadius: 6,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    overflow: 'hidden',
-  },
-  check: { color: colors.accent2, marginLeft: spacing.sm, fontSize: 16, fontWeight: '700' },
-});
+    container: { flex: 1 },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingTop: spacing.xxl + spacing.md,
+      paddingBottom: spacing.sm,
+      paddingHorizontal: spacing.lg,
+    },
+    backChip: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backIcon: { color: colors.textPrimary, fontSize: 24, lineHeight: 28, marginTop: -2 },
+    modelBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSubtle,
+      borderWidth: 1,
+      borderRadius: radius.pill,
+      paddingVertical: 7,
+      paddingHorizontal: spacing.md,
+      marginHorizontal: spacing.sm,
+    },
+    modelDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+      backgroundColor: colors.accent2,
+      marginRight: 7,
+    },
+    modelLabel: { color: colors.textPrimary, fontSize: 13, fontWeight: '700', flexShrink: 1 },
+    chevron: { color: colors.textMuted, marginLeft: 6, fontSize: 12 },
+    dateSep: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      textAlign: 'center',
+      marginVertical: spacing.md,
+    },
+    list: { padding: spacing.md, paddingBottom: spacing.lg },
+    bubble: {
+      borderRadius: radius.lg,
+      padding: spacing.md + 2,
+      marginVertical: 4,
+      maxWidth: '88%',
+    },
+    userBubble: { alignSelf: 'flex-end' },
+    assistantBubble: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+    },
+    assistantAccent: {
+      position: 'absolute',
+      left: 0,
+      top: spacing.md,
+      bottom: spacing.md,
+      width: 3,
+      borderRadius: 2,
+      backgroundColor: colors.accent2,
+    },
+    userText: { color: colors.textPrimary, lineHeight: 20 },
+    assistantText: { color: colors.textPrimary, lineHeight: 20, paddingLeft: 5 },
+    reasoning: {
+      color: colors.textSecondary,
+      fontStyle: 'italic',
+      marginTop: 6,
+      fontSize: 12,
+      paddingLeft: 5,
+    },
+    reasoningToggle: { color: colors.accent2, fontSize: 12, marginTop: 6, fontWeight: '600' },
+    streamingBubble: { width: '88%', alignSelf: 'flex-start' },
+    time: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 10, marginTop: 4 },
+    messageImage: {
+      width: '100%',
+      borderRadius: radius.sm,
+      marginTop: 2,
+    },
+    saveBtn: {
+      alignSelf: 'flex-end',
+      marginTop: 6,
+      paddingVertical: 5,
+      paddingHorizontal: 12,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMuted,
+    },
+    saveBtnText: { color: colors.accent2, fontSize: 12, fontWeight: '700' },
+    emptyWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xxl * 2,
+      paddingTop: 120,
+    },
+    emptyGlyph: { color: colors.accent2, fontSize: 34, marginBottom: spacing.md },
+    emptyTitle: { color: colors.textPrimary, fontSize: 21, fontWeight: '800', textAlign: 'center' },
+    emptyHint: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      textAlign: 'center',
+      marginTop: spacing.sm,
+      lineHeight: 19,
+    },
+    emptyModel: {
+      color: colors.accent2,
+      fontSize: 12,
+      fontWeight: '700',
+      marginTop: spacing.lg,
+      backgroundColor: colors.accent2Soft,
+      borderColor: colors.borderSubtle,
+      borderWidth: 1,
+      borderRadius: radius.pill,
+      overflow: 'hidden',
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+    },
+    error: { color: colors.danger, padding: spacing.sm, textAlign: 'center', fontSize: 12 },
+    ratioRow: { maxHeight: 42, flexGrow: 0 },
+    ratioRowContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      paddingBottom: spacing.xs,
+    },
+    ratioChip: {
+      paddingVertical: 6,
+      paddingHorizontal: 13,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMuted,
+    },
+    ratioChipActive: { backgroundColor: colors.accent, borderColor: colors.accentGlow },
+    ratioChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
+    ratioChipTextActive: { color: colors.textPrimary },
+    composer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      marginHorizontal: spacing.sm,
+      marginBottom: spacing.sm,
+      padding: spacing.sm + 1,
+      backgroundColor: colors.surfaceBar,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+    },
+    input: {
+      flex: 1,
+      color: colors.textPrimary,
+      paddingTop: Platform.OS === 'ios' ? 8 : 6,
+      paddingBottom: Platform.OS === 'ios' ? 8 : 6,
+      paddingHorizontal: 6,
+      maxHeight: 120,
+      fontSize: 15,
+    },
+    sendBtn: {
+      marginLeft: spacing.sm,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: colors.accent,
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 4,
+    },
+    sendBtnText: { color: colors.textPrimary, fontSize: 16 },
+    stopBtn: {
+      marginLeft: spacing.sm,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,92,106,0.16)',
+      borderWidth: 1,
+      borderColor: colors.danger,
+    },
+    stopSquare: { width: 12, height: 12, borderRadius: 3, backgroundColor: colors.danger },
+    backdrop: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+    panel: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: PANEL_WIDTH,
+      backgroundColor: colors.bgBaseAlt,
+      borderLeftWidth: 1,
+      borderLeftColor: colors.borderSubtle,
+      paddingTop: spacing.xxl * 2,
+      paddingHorizontal: spacing.md,
+      elevation: 12,
+    },
+    panelTitle: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+      marginBottom: spacing.md,
+    },
+    panelItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: spacing.md,
+      borderRadius: radius.md,
+      marginBottom: spacing.xs,
+    },
+    panelItemSelected: {
+      backgroundColor: colors.accentSoft,
+      borderWidth: 1,
+      borderColor: colors.accent,
+    },
+    panelItemText: { flex: 1 },
+    panelItemLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
+    panelItemDesc: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+    panelBadge: {
+      color: colors.accent2,
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 1,
+      marginLeft: spacing.sm,
+      borderWidth: 1,
+      borderColor: colors.accent2,
+      borderRadius: 6,
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      overflow: 'hidden',
+    },
+    check: { color: colors.accent2, marginLeft: spacing.sm, fontSize: 16, fontWeight: '700' },
+  });

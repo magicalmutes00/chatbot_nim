@@ -3,6 +3,22 @@
 // visual-genai endpoints at https://ai.api.nvidia.com/v1/genai/{id}.
 // NVIDIA retires models regularly — if replies stop coming, re-check the endpoint.
 
+export interface AspectRatioOption {
+  label: string; // shown in the UI chip row, e.g. '1:1'
+  width: number;
+  height: number;
+}
+
+// Discrete dimensions the hosted FLUX endpoint accepts (validated live —
+// it rejects anything outside this 768…1344 set, so ratios use nearest fits).
+export const FLUX_ASPECT_RATIOS: AspectRatioOption[] = [
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '4:3', width: 1024, height: 768 },
+  { label: '3:4', width: 768, height: 1024 },
+  { label: '16:9', width: 1344, height: 768 },
+  { label: '9:16', width: 768, height: 1344 },
+];
+
 export interface NimModel {
   id: string; // exact string sent to the NIM API "model" field / hosted path
   label: string; // shown in the UI
@@ -11,6 +27,7 @@ export interface NimModel {
   kind?: 'chat' | 'image'; // defaults to 'chat'
   steps?: number; // image models: diffusion steps
   cfgScale?: number; // image models: guidance scale
+  aspectRatios?: AspectRatioOption[]; // image models: selectable sizes
 }
 
 export const NIM_MODELS: NimModel[] = [
@@ -33,14 +50,16 @@ export const NIM_MODELS: NimModel[] = [
   },
   // Image generation — hosted visual-genai endpoints (dot naming, e.g.
   // flux.1-dev). Verified live: SD 3.5 / schnell are not served for this
-  // account (404 / hang), FLUX.1 Dev is. FLUX rejects `aspect_ratio`.
+  // account (404 / hang), FLUX.1 Dev is. FLUX rejects `aspect_ratio` but
+  // accepts width/height from the discrete set above.
   {
     id: 'black-forest-labs/flux.1-dev',
     label: 'FLUX.1 Dev',
-    description: 'High-quality image generation (~8s)',
+    description: 'High-quality image generation',
     kind: 'image',
     steps: 50,
     cfgScale: 5,
+    aspectRatios: FLUX_ASPECT_RATIOS,
   },
 ];
 

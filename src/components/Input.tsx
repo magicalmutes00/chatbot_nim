@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { StyleSheet, TextInput, TextInputProps, View, Text } from 'react-native';
 import { Surface } from './Surface';
 import { radius, type ThemeColors } from '../theme/tokens';
@@ -11,14 +11,33 @@ interface InputProps extends Omit<TextInputProps, 'style' | 'placeholderTextColo
 
 export function Input({ label, error, ...rest }: InputProps) {
   const { colors } = useTheme();
+  const [focused, setFocused] = useState(false);
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const focusStyle = useMemo(
+    () => ({ borderColor: colors.accent, borderWidth: 1 }),
+    [colors],
+  );
 
   return (
     <View>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <Surface radius={radius.md} tone="muted" border shadow={false}>
+      <Surface
+        radius={radius.md}
+        tone="muted"
+        border
+        shadow={false}
+        style={focused ? focusStyle : null}
+      >
         <TextInput
           {...rest}
+          onFocus={(e) => {
+            setFocused(true);
+            rest.onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            rest.onBlur?.(e);
+          }}
           placeholderTextColor={colors.textMuted}
           style={styles.input}
           selectionColor={colors.accent}
@@ -33,10 +52,11 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     label: {
       color: colors.textSecondary,
-      fontSize: 12,
-      letterSpacing: 1,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.2,
       textTransform: 'uppercase',
-      marginBottom: 6,
+      marginBottom: 7,
       marginLeft: 4,
     },
     input: {

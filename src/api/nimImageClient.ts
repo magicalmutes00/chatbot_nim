@@ -13,7 +13,12 @@ const GENAI_BASE = 'https://ai.api.nvidia.com/v1/genai';
  * can stop a request mid-flight.
  */
 export async function generateImage(
-  { model, prompt }: { model: string; prompt: string },
+  {
+    model,
+    prompt,
+    width,
+    height,
+  }: { model: string; prompt: string; width?: number; height?: number },
   signal?: AbortSignal,
 ): Promise<string> {
   const apiKey = Config.NVIDIA_API_KEY;
@@ -24,13 +29,15 @@ export async function generateImage(
   }
 
   const info = getModelById(model);
-  // FLUX.1 rejects `aspect_ratio` (always returns 1024x1024) — don't send it.
+  // FLUX.1 rejects `aspect_ratio` (it takes width/height instead — see
+  // FLUX_ASPECT_RATIOS for the discrete values the endpoint accepts).
   const body = JSON.stringify({
     prompt,
     mode: 'base',
     seed: 0, // 0 = random
     cfg_scale: info?.cfgScale ?? 5,
     steps: info?.steps ?? 30,
+    ...(width && height ? { width, height } : {}),
   });
 
   return new Promise<string>((resolve, reject) => {

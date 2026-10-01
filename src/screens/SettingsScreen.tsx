@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,7 +12,10 @@ import { useTheme } from '../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Settings'>;
 
-const MODES: ThemeMode[] = ['light', 'dark'];
+const MODES: { id: ThemeMode; glyph: string; label: string }[] = [
+  { id: 'light', glyph: '☀', label: 'Light' },
+  { id: 'dark', glyph: '☾', label: 'Dark' },
+];
 
 export default function SettingsScreen({ navigation }: Props) {
   const { user, signOut } = useAuth();
@@ -22,27 +25,32 @@ export default function SettingsScreen({ navigation }: Props) {
   return (
     <Background>
       <View style={styles.topBar}>
-        <Pressable hitSlop={10} onPress={() => navigation.goBack()}>
+        <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={styles.backChip}>
           <Text style={styles.backIcon}>{'‹'}</Text>
         </Pressable>
         <Text style={styles.topBarTitle}>Settings</Text>
-        <View style={styles.topBarSpacer} />
+        <View style={styles.backChip} />
       </View>
 
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Surface style={styles.section} radius={radius.lg}>
           <Text style={styles.sectionLabel}>Appearance</Text>
           <View style={styles.segmentRow}>
             {MODES.map((m) => (
               <Pressable
-                key={m}
-                onPress={() => setMode(m)}
-                style={[styles.segment, mode === m && styles.segmentActive]}
+                key={m.id}
+                onPress={() => setMode(m.id)}
+                style={[styles.segment, mode === m.id && styles.segmentActive]}
                 accessibilityRole="button"
-                accessibilityState={{ selected: mode === m }}
+                accessibilityState={{ selected: mode === m.id }}
               >
-                <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>
-                  {m === 'light' ? 'Light' : 'Dark'}
+                <Text
+                  style={[styles.segmentGlyph, mode === m.id && styles.segmentTextActive]}
+                >
+                  {m.glyph}
+                </Text>
+                <Text style={[styles.segmentText, mode === m.id && styles.segmentTextActive]}>
+                  {m.label}
                 </Text>
               </Pressable>
             ))}
@@ -59,17 +67,20 @@ export default function SettingsScreen({ navigation }: Props) {
           <Text style={styles.value}>
             Default: {NIM_MODELS.find((m) => m.id === DEFAULT_MODEL_ID)?.label ?? DEFAULT_MODEL_ID}
           </Text>
-          <View style={{ height: spacing.sm }} />
+          <View style={styles.gapSm} />
           {NIM_MODELS.map((m) => (
             <Text key={m.id} style={styles.modelRow}>
               · {m.label}
+              {m.kind === 'image' ? '  (image)' : ''}
             </Text>
           ))}
         </Surface>
 
-        <View style={{ height: spacing.xl }} />
+        <Text style={styles.version}>Trisentric AI · v1.0</Text>
+
+        <View style={styles.gapXl} />
         <Button title="Log out" onPress={() => signOut()} variant="destructive" />
-      </View>
+      </ScrollView>
     </Background>
   );
 }
@@ -83,21 +94,31 @@ const createStyles = (colors: ThemeColors) =>
       paddingBottom: spacing.sm,
       paddingHorizontal: spacing.lg,
     },
-    backIcon: { color: colors.textPrimary, fontSize: 30, lineHeight: 34 },
+    backChip: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: colors.surfaceMuted,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backIcon: { color: colors.textPrimary, fontSize: 24, lineHeight: 28, marginTop: -2 },
     topBarTitle: {
       color: colors.textPrimary,
       fontSize: 17,
-      fontWeight: '700',
+      fontWeight: '800',
       flex: 1,
       textAlign: 'center',
     },
-    topBarSpacer: { width: 30 },
-    container: { flex: 1, padding: spacing.lg, paddingTop: spacing.md },
-    section: { padding: spacing.lg, marginBottom: spacing.md },
+    container: { padding: spacing.lg, paddingBottom: spacing.xxl * 2 },
+    section: { padding: spacing.lg + 2, marginBottom: spacing.md },
     sectionLabel: {
       color: colors.textSecondary,
       fontSize: 11,
-      letterSpacing: 1.2,
+      fontWeight: '700',
+      letterSpacing: 1.4,
       textTransform: 'uppercase',
       marginBottom: 10,
     },
@@ -111,17 +132,30 @@ const createStyles = (colors: ThemeColors) =>
     },
     segment: {
       flex: 1,
-      paddingVertical: 8,
+      flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 9,
       borderRadius: radius.pill,
+      gap: 6,
     },
     segmentActive: { backgroundColor: colors.accent },
+    segmentGlyph: { color: colors.textSecondary, fontSize: 13 },
     segmentText: {
       color: colors.textSecondary,
       fontSize: 13,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     segmentTextActive: { color: colors.textPrimary },
-    value: { color: colors.textPrimary, fontSize: 16 },
+    value: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+    gapSm: { height: spacing.sm },
+    gapXl: { height: spacing.xl },
     modelRow: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
+    version: {
+      color: colors.textMuted,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: spacing.lg,
+      letterSpacing: 0.5,
+    },
   });

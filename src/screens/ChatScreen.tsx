@@ -11,20 +11,28 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  Image,
+  Clipboard,
+  ToastAndroid,
+  Alert,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
 import { useChatStore } from '../store/chatStore';
 import { streamChatCompletion } from '../api/nimClient';
+import { generateImage } from '../api/nimImageClient';
 import { NIM_MODELS, getModelById } from '../config/nimModels';
 import {
   addMessage,
   maybeSetTitleFromFirstMessage,
   subscribeToMessages,
 } from '../services/firestoreChats';
-import { GlassBackground } from '../components/GlassBackground';
-import { colors, radius, spacing } from '../theme/glass';
+import { ensureGalleryPermission, saveImageToGallery } from '../services/imageSave';
+import { Background } from '../components/Background';
+import { radius, spacing, type ThemeColors } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeContext';
+import Logo from '../assets/logo.png';
 import type { ChatMessage } from '../types/chat';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Chat'>;
@@ -34,6 +42,8 @@ const PANEL_WIDTH = 290;
 export default function ChatScreen({ route, navigation }: Props) {
   const { user } = useAuth();
   const passedChatId = route.params?.chatId;
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const {
     activeChatId,
@@ -57,6 +67,8 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [input, setInput] = useState('');
   const [showReasoning, setShowReasoning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
   /** Messages shown instantly before Firestore confirms them. */
   const [optimistic, setOptimistic] = useState<ChatMessage[]>([]);
 
@@ -163,6 +175,12 @@ export default function ChatScreen({ route, navigation }: Props) {
       setError('Could not save your message.');
     }
 
+    // Image models take a prompt, not chat history — run that flow instead.
+    if (getModelById(selectedModel)?.kind === 'image') {
+      await runImageGeneration(text, chatId, user.uid);
+      return;
+    }
+
     const history = visibleRef.current.map((m) => ({ role: m.role, content: m.content }));
 
     startStreaming();
@@ -207,8 +225,15 @@ export default function ChatScreen({ route, navigation }: Props) {
           }
         },
         onError: (err, partial) => {
-          setError(err.message);
-          console.log('[ChatScreen] stream error:', err.message);
+          const cancelled = err.name === 'AbortError';
+          if (cancelled) {
+            // User-initiated stop — not an error; keep whatever arrived.
+            finishStreaming();
+            console.log('[ChatScreen] stream stopped by user');
+          } else {
+            setError(err.message);
+            console.log('[ChatScreen] stream error:', err.message);
+          }
           if (partial.fullText || partial.fullReasoning) {
             setOptimistic((prev) => [
               ...prev,
@@ -246,29 +271,149 @@ export default function ChatScreen({ route, navigation }: Props) {
     );
   };
 
+  const copyMessage = (text: string) => {
+    if (!text) return;
+    Clipboard.setString(text);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show('Copied to clipboard', ToastAndroid.SHORT);
+    }
+  };
+
+  const handleSaveImage = async (item: ChatMessage) => {
+    if (!item.imageUri || savingId) return;
+    setSavingId(item.id);
+    try {
+      const allowed = await ensureGalleryPermission();
+      if (!allowed) {
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Storage permission needed to save', ToastAndroid.LONG);
+        }
+        return;
+      }
+      await saveImageToGallery(item.imageUri);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Saved to gallery', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Saved', 'Image added to your photo library.');
+      }
+    } catch (e: any) {
+      const msg = e?.message ?? 'Could not save image';
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(msg, ToastAndroid.LONG);
+      } else {
+        Alert.alert('Could not save image', msg);
+      }
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  /** Image-model flow: one prompt in, one image back (no streaming tokens). */
+  const runImageGeneration = async (prompt: string, chatId: string, uid: string) => {
+    startStreaming();
+    setImageBusy(true);
+    scrollToEnd();
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const uri = await generateImage({ model: selectedModel, prompt }, controller.signal);
+      const assistantMsg: ChatMessage = {
+        id: `local-assistant-${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        imageUri: uri,
+        model: selectedModel,
+        createdAt: Date.now(),
+      };
+      setOptimistic((prev) => [...prev, assistantMsg]);
+      scrollToEnd();
+
+      // Firestore docs cap at 1 MiB — skip persisting oversized images.
+      const persistable = uri.length <= 700_000;
+      try {
+        const payload: {
+          role: 'assistant';
+          content: string;
+          model: string;
+          imageUri?: string;
+        } = {
+          role: 'assistant',
+          content: persistable ? '' : '(image shown this session only — too large to save)',
+          model: selectedModel,
+        };
+        if (persistable) payload.imageUri = uri;
+        await addMessage(uid, chatId, payload);
+      } catch {
+        setError('Image could not be saved.');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        setError(e?.message ?? 'Image generation failed');
+      }
+    } finally {
+      setImageBusy(false);
+      finishStreaming();
+    }
+  };
+
   const renderItem = ({ item }: { item: ChatMessage }) => (
-    <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-      <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>
-        {item.role === 'assistant' ? stripMarkdown(item.content) : item.content}
-      </Text>
+    <Pressable
+      onLongPress={() => copyMessage(item.content)}
+      style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}
+    >
+      {item.imageUri ? (
+        <>
+          <Image source={{ uri: item.imageUri }} style={styles.messageImage} resizeMode="cover" />
+          {item.imageUri.startsWith('data:') ? (
+            <Pressable
+              disabled={savingId === item.id}
+              onPress={() => handleSaveImage(item)}
+              style={styles.saveBtn}
+            >
+              <Text style={styles.saveBtnText}>
+                {savingId === item.id ? 'Saving…' : 'Save image'}
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
+      ) : null}
+      {item.content ? (
+        <Text style={item.role === 'user' ? styles.userText : styles.assistantText}>
+          {item.role === 'assistant' ? stripMarkdown(item.content) : item.content}
+        </Text>
+      ) : null}
       {item.reasoningContent && showReasoning ? (
         <Text style={styles.reasoning}>{item.reasoningContent}</Text>
       ) : null}
+      <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
+    </Pressable>
+  );
+
+  const renderEmpty = () => (
+    <View style={styles.emptyWrap}>
+      <Text style={styles.emptyTitle}>How can I help today?</Text>
+      <Text style={styles.emptyHint}>
+        Ask anything — replies stream in as they're generated. Long-press a reply to copy it.
+      </Text>
+      <Text style={styles.emptyModel}>Model: {getModelById(selectedModel)?.label ?? selectedModel}</Text>
     </View>
   );
 
   return (
-    <GlassBackground>
+    <Background>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
-        {/* Top bar: back + model picker trigger */}
+        {/* Top bar: back + logo + model picker trigger */}
         <View style={styles.topBar}>
           <Pressable hitSlop={10} onPress={() => navigation.goBack()}>
             <Text style={styles.backIcon}>{'‹'}</Text>
           </Pressable>
+          <Image source={Logo} style={styles.headerLogo} resizeMode="contain" />
           <Pressable style={styles.modelBtn} onPress={openPanel}>
             <Text numberOfLines={1} style={styles.modelLabel}>
               {getModelById(selectedModel)?.label ?? 'Model'}
@@ -284,10 +429,12 @@ export default function ChatScreen({ route, navigation }: Props) {
           renderItem={renderItem}
           contentContainerStyle={styles.list}
           onContentSizeChange={scrollToEnd}
+          ListEmptyComponent={isStreaming ? undefined : renderEmpty}
         />
 
         {isStreaming && (
           <View style={[styles.bubble, styles.assistantBubble]}>
+            {imageBusy ? <Text style={styles.assistantText}>Generating image…</Text> : null}
             {!!streamingText && <Text style={styles.assistantText}>{stripMarkdown(streamingText)}</Text>}
             {streamingReasoning ? (
               <Pressable onPress={() => setShowReasoning((v) => !v)}>
@@ -299,7 +446,7 @@ export default function ChatScreen({ route, navigation }: Props) {
             {showReasoning && streamingReasoning ? (
               <Text style={styles.reasoning}>{streamingReasoning}</Text>
             ) : null}
-            <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 4 }} />
+            <ActivityIndicator size="small" color={colors.accent2} style={{ marginTop: 4 }} />
           </View>
         )}
 
@@ -309,19 +456,32 @@ export default function ChatScreen({ route, navigation }: Props) {
         <View style={styles.inputBar}>
           <TextInput
             style={styles.input}
-            placeholder="Message"
-            placeholderTextColor="rgba(255,255,255,0.40)"
+            placeholder={
+              getModelById(selectedModel)?.kind === 'image' ? 'Describe the image…' : 'Message'
+            }
+            placeholderTextColor={colors.textMuted}
             value={input}
             onChangeText={setInput}
             multiline
           />
-          <Pressable
-            style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.7 }]}
-            onPress={handleSend}
-            disabled={isStreaming}
-          >
-            <Text style={styles.sendBtnText}>{isStreaming ? '…' : 'Send'}</Text>
-          </Pressable>
+          {isStreaming ? (
+            <Pressable
+              style={({ pressed }) => [styles.stopBtn, pressed && { opacity: 0.7 }]}
+              onPress={() => abortRef.current?.abort()}
+              accessibilityLabel="Stop generating"
+            >
+              <Text style={styles.stopBtnText}>Stop</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.7 }]}
+              onPress={handleSend}
+            >
+              <Text style={styles.sendBtnText}>
+                {getModelById(selectedModel)?.kind === 'image' ? 'Create' : 'Send'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {/* Model picker slide-over */}
@@ -351,12 +511,13 @@ export default function ChatScreen({ route, navigation }: Props) {
                   </Text>
                 ) : null}
               </View>
+              {m.kind === 'image' ? <Text style={styles.panelBadge}>{'IMG'}</Text> : null}
               {m.id === selectedModel ? <Text style={styles.check}>{'✓'}</Text> : null}
             </Pressable>
           ))}
         </Animated.View>
       </KeyboardAvoidingView>
-    </GlassBackground>
+    </Background>
   );
 }
 
@@ -365,7 +526,17 @@ function stripMarkdown(text: string): string {
   return text.replace(/\*\*([^*]*)\*\*/g, '$1').replace(/\*\*/g, '');
 }
 
-const styles = StyleSheet.create({
+/** Manual HH:MM am/pm — avoids Hermes Intl quirks on some Android devices. */
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const h24 = d.getHours();
+  const h = h24 % 12 || 12;
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m} ${h24 >= 12 ? 'pm' : 'am'}`;
+}
+
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row',
@@ -374,12 +545,13 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
     paddingHorizontal: spacing.lg,
   },
-  backIcon: { color: colors.textPrimary, fontSize: 30, lineHeight: 34, marginRight: spacing.md },
+  backIcon: { color: colors.textPrimary, fontSize: 30, lineHeight: 34, marginRight: 4 },
+  headerLogo: { width: 80, height: 24 },
   modelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.glassLighter,
-    borderColor: colors.glassBorderSubtle,
+    backgroundColor: colors.surface,
+    borderColor: colors.borderSubtle,
     borderWidth: 1,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
@@ -394,33 +566,67 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
     alignSelf: 'flex-end',
     borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderColor: colors.border,
   },
   assistantBubble: {
-    backgroundColor: colors.glassLighter,
+    backgroundColor: colors.surface,
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: colors.glassBorderSubtle,
+    borderColor: colors.borderSubtle,
   },
   userText: { color: colors.textPrimary },
   assistantText: { color: colors.textPrimary },
   reasoning: { color: colors.textSecondary, fontStyle: 'italic', marginTop: 6, fontSize: 12 },
-  reasoningToggle: { color: colors.accent, fontSize: 12, marginTop: 6 },
+  reasoningToggle: { color: colors.accent2, fontSize: 12, marginTop: 6 },
+  time: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 10, marginTop: 4 },
+  messageImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: radius.sm,
+    marginTop: 2,
+  },
+  saveBtn: {
+    alignSelf: 'flex-end',
+    marginTop: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+  },
+  saveBtnText: { color: colors.accent2, fontSize: 12, fontWeight: '600' },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xxl * 2, paddingTop: 120 },
+  emptyTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '700', textAlign: 'center' },
+  emptyHint: { color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: spacing.sm, lineHeight: 19 },
+  emptyModel: {
+    color: colors.accent2,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: spacing.lg,
+    backgroundColor: colors.accent2Soft,
+    borderColor: colors.borderSubtle,
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
   error: { color: colors.danger, padding: spacing.sm, textAlign: 'center', fontSize: 12 },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     padding: spacing.sm,
-    backgroundColor: colors.glassDark,
+    backgroundColor: colors.surfaceBar,
     borderTopWidth: 1,
-    borderTopColor: colors.glassBorderSubtle,
+    borderTopColor: colors.borderSubtle,
   },
   input: {
     flex: 1,
     color: colors.textPrimary,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
-    backgroundColor: colors.glassLighter,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     borderRadius: radius.pill,
     paddingHorizontal: 14,
     paddingVertical: Platform.OS === 'ios' ? 8 : 6,
@@ -429,14 +635,24 @@ const styles = StyleSheet.create({
   },
   sendBtn: {
     marginLeft: spacing.sm,
-    backgroundColor: colors.accentSoft,
+    backgroundColor: colors.accent,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderColor: colors.accentGlow,
     borderRadius: radius.pill,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  sendBtnText: { color: colors.accent, fontWeight: '600' },
+  sendBtnText: { color: colors.textPrimary, fontWeight: '600' },
+  stopBtn: {
+    marginLeft: spacing.sm,
+    backgroundColor: 'rgba(255,92,106,0.14)',
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  stopBtnText: { color: colors.danger, fontWeight: '600' },
   backdrop: {
     position: 'absolute',
     top: 0,
@@ -453,7 +669,7 @@ const styles = StyleSheet.create({
     width: PANEL_WIDTH,
     backgroundColor: colors.bgBaseAlt,
     borderLeftWidth: 1,
-    borderLeftColor: colors.glassBorderSubtle,
+    borderLeftColor: colors.borderSubtle,
     paddingTop: spacing.xxl * 2,
     paddingHorizontal: spacing.md,
     elevation: 12,
@@ -472,9 +688,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     marginBottom: spacing.xs,
   },
-  panelItemSelected: { backgroundColor: colors.glassLighter, borderWidth: 1, borderColor: colors.glassBorder },
+  panelItemSelected: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.accent },
   panelItemText: { flex: 1 },
   panelItemLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
   panelItemDesc: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  check: { color: colors.accent, marginLeft: spacing.sm, fontSize: 16, fontWeight: '700' },
+  panelBadge: {
+    color: colors.accent2,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginLeft: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.accent2,
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    overflow: 'hidden',
+  },
+  check: { color: colors.accent2, marginLeft: spacing.sm, fontSize: 16, fontWeight: '700' },
 });

@@ -5,6 +5,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   reasoningContent?: string; // optional, from NIM's `reasoning_content`
+  imageUri?: string; // data URI or URL — set when an image model produced the reply
   model: string;
   createdAt: number; // ms epoch, mirrors Firestore serverTimestamp on read
 }

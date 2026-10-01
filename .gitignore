@@ -81,3 +81,9 @@ yarn-error.log
 # Release signing (never commit)
 android/keystore.properties
 android/app/trisentric-release.keystore
+
+# Local AI tooling config
+.claude/
+
+# Local build logs
+build-release.log

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   FlatList,
@@ -9,13 +9,13 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import { BlurView } from '@react-native-community/blur';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
 import { subscribeToChats, createChat, deleteChat } from '../services/firestoreChats';
 import { DEFAULT_MODEL_ID } from '../config/nimModels';
-import { colors, radius, spacing } from '../theme/glass';
+import { radius, spacing, type ThemeColors } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeContext';
 import type { Chat } from '../types/chat';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'ChatList'>;
@@ -24,6 +24,8 @@ const MENU_WIDTH = 280;
 
 export default function ChatListScreen({ navigation }: Props) {
   const { user, signOut } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuX = useRef(new Animated.Value(-MENU_WIDTH)).current;
@@ -70,7 +72,7 @@ export default function ChatListScreen({ navigation }: Props) {
   };
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.root}>
       <View style={styles.topBar}>
         <Pressable hitSlop={10} onPress={openMenu} accessibilityLabel="Open menu">
           <Text style={styles.menuIcon}>{'☰'}</Text>
@@ -79,23 +81,41 @@ export default function ChatListScreen({ navigation }: Props) {
         <View style={{ width: 28 }} />
       </View>
 
-      <View style={styles.hero}>
-        <Text style={styles.heroTitle}>Welcome back</Text>
-        <Text style={styles.heroHint}>Start a new conversation from the + button, or open a past chat from the menu.</Text>
-      </View>
+      <Text style={styles.sectionLabel}>Recent chats</Text>
+      <FlatList
+        data={chats}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyTitle}>No conversations yet</Text>
+            <Text style={styles.emptyHint}>
+              Tap the + button to start your first chat with an NVIDIA NIM model.
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={({ pressed }) => [styles.chatRow, pressed && { opacity: 0.6 }]}
+            onPress={() => navigation.navigate('Chat', { chatId: item.id })}
+            onLongPress={() => handleDelete(item.id)}
+          >
+            <View style={styles.chatRowText}>
+              <Text style={styles.chatRowTitle} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <Text style={styles.chatRowMeta}>{relativeTime(item.updatedAt)}</Text>
+            </View>
+            <Text style={styles.chatRowChevron}>{'›'}</Text>
+          </Pressable>
+        )}
+      />
 
       <Pressable
         onPress={handleNewChat}
         style={({ pressed }) => [styles.fab, pressed && { opacity: 0.75 }]}
         accessibilityLabel="New chat"
       >
-        <BlurView
-          blurType="light"
-          blurAmount={35}
-          reducedTransparencyFallbackColor="#ffffff"
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.accentSoft }]} />
         <Text style={styles.fabIcon}>{'+'}</Text>
       </Pressable>
 
@@ -110,33 +130,6 @@ export default function ChatListScreen({ navigation }: Props) {
         </Text>
         <View style={styles.menuDivider} />
 
-        <Text style={styles.menuSection}>Chats</Text>
-        <FlatList
-          data={chats}
-          keyExtractor={(item) => item.id}
-          style={{ flex: 1 }}
-          ListEmptyComponent={
-            <Text style={styles.menuEmpty}>No conversations yet</Text>
-          }
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [styles.chatItem, pressed && { opacity: 0.6 }]}
-              onPress={() => {
-                closeMenu();
-                navigation.navigate('Chat', { chatId: item.id });
-              }}
-              onLongPress={() => handleDelete(item.id)}
-            >
-              <Text style={styles.chatItemTitle} numberOfLines={1}>
-                {item.title}
-              </Text>
-              <Text style={styles.chatItemMeta}>{relativeTime(item.updatedAt)}</Text>
-            </Pressable>
-          )}
-        />
-
-        <View style={styles.menuDivider} />
-
         <Pressable
           style={({ pressed }) => [styles.menuItem, pressed && { opacity: 0.6 }]}
           onPress={() => {
@@ -144,7 +137,17 @@ export default function ChatListScreen({ navigation }: Props) {
             handleNewChat();
           }}
         >
-          <Text style={[styles.menuItemText, { color: colors.accent }]}>{'+  New chat'}</Text>
+          <Text style={[styles.menuItemText, { color: colors.accent2 }]}>{'+  New chat'}</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [styles.menuItem, pressed && { opacity: 0.6 }]}
+          onPress={() => {
+            closeMenu();
+            navigation.navigate('Settings');
+          }}
+        >
+          <Text style={[styles.menuItemText, { color: colors.textSecondary }]}>Settings</Text>
         </Pressable>
 
         <Pressable
@@ -173,16 +176,9 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-const styles = StyleSheet.create({
-  hero: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xxl * 2 },
-  heroTitle: { color: colors.textPrimary, fontSize: 26, fontWeight: '700' },
-  heroHint: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    lineHeight: 20,
-  },
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.bgBase },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -198,7 +194,46 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  list: { padding: spacing.lg, paddingBottom: 120 },
+  sectionLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  listContent: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingBottom: 120 },
+  chatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle,
+    marginBottom: spacing.xs,
+  },
+  chatRowText: { flex: 1 },
+  chatRowTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  chatRowMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  chatRowChevron: { color: colors.textMuted, fontSize: 18, marginLeft: spacing.sm },
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl * 2,
+  },
+  emptyTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center' },
+  emptyHint: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    lineHeight: 19,
+  },
   fab: {
     position: 'absolute',
     right: spacing.xl,
@@ -207,17 +242,18 @@ const styles = StyleSheet.create({
     height: 58,
     borderRadius: 29,
     overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.glassBorder,
+    borderWidth: 1,
+    borderColor: colors.accentGlow,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#0d1220',
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
+    elevation: 6,
   },
-  fabIcon: { color: colors.accent, fontSize: 30, lineHeight: 34, fontWeight: '400', marginTop: -2 },
+  fabIcon: { color: colors.textPrimary, fontSize: 30, lineHeight: 34, fontWeight: '400', marginTop: -2 },
   backdrop: {
     position: 'absolute',
     top: 0,
@@ -234,7 +270,7 @@ const styles = StyleSheet.create({
     width: MENU_WIDTH,
     backgroundColor: colors.bgBaseAlt,
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.glassBorderSubtle,
+    borderRightColor: colors.borderSubtle,
     paddingTop: spacing.xxl * 2,
     paddingBottom: spacing.lg,
     paddingHorizontal: spacing.md,
@@ -254,7 +290,7 @@ const styles = StyleSheet.create({
   },
   menuDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.glassBorderSubtle,
+    backgroundColor: colors.borderSubtle,
     marginVertical: spacing.md,
   },
   menuItem: {
@@ -263,27 +299,4 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   menuItemText: { fontSize: 15, fontWeight: '600' },
-  menuSection: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  chatItem: {
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-  },
-  chatItemTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
-  chatItemMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  menuEmpty: {
-    color: colors.textMuted,
-    fontSize: 13,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    fontStyle: 'italic',
-  },
 });

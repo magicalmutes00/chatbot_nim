@@ -1,17 +1,20 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
-import { GlassSurface } from '../components/GlassSurface';
-import { GlassButton } from '../components/GlassButton';
-import { GlassInput } from '../components/GlassInput';
-import { colors, radius, spacing } from '../theme/glass';
+import { Surface } from '../components/Surface';
+import { Button } from '../components/Button';
+import { Input } from '../components/Input';
+import { radius, spacing, type ThemeColors } from '../theme/tokens';
+import { useTheme } from '../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Signup'>;
 
 export default function SignupScreen({ navigation }: Props) {
   const { signUp } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -32,13 +35,13 @@ export default function SignupScreen({ navigation }: Props) {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <GlassSurface style={styles.card} radius={radius.xl}>
+        <Surface style={styles.card} radius={radius.xl}>
           <View style={styles.cardInner}>
             <Text style={styles.heading}>Create your account</Text>
             <Text style={styles.subheading}>Start chatting in under a minute</Text>
 
             <View style={{ height: spacing.lg }} />
-            <GlassInput
+            <Input
               label="Email"
               placeholder="you@example.com"
               autoCapitalize="none"
@@ -47,7 +50,7 @@ export default function SignupScreen({ navigation }: Props) {
               onChangeText={setEmail}
             />
             <View style={{ height: spacing.md }} />
-            <GlassInput
+            <Input
               label="Password"
               placeholder="At least 6 characters"
               secureTextEntry
@@ -58,9 +61,9 @@ export default function SignupScreen({ navigation }: Props) {
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <View style={{ height: spacing.lg }} />
-            <GlassButton title={loading ? 'Creating…' : 'Create account'} onPress={handleSignup} loading={loading} />
+            <Button title={loading ? 'Creating…' : 'Create account'} onPress={handleSignup} loading={loading} />
           </View>
-        </GlassSurface>
+        </Surface>
 
         <Pressable onPress={() => navigation.navigate('Login')} hitSlop={8} style={{ marginTop: spacing.xl }}>
           <Text style={styles.footnote}>
@@ -72,13 +75,14 @@ export default function SignupScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  scroll: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+  scroll: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.bgBaseAlt },
   card: {},
   cardInner: { padding: spacing.xl },
   heading: { color: colors.textPrimary, fontSize: 24, fontWeight: '700' },
   subheading: { color: colors.textSecondary, marginTop: 4, fontSize: 14 },
   error: { color: colors.danger, marginTop: spacing.md, fontSize: 13 },
   footnote: { color: colors.textSecondary, textAlign: 'center', fontSize: 14 },
-  link: { color: colors.accent, fontWeight: '600' },
+  link: { color: colors.accent2, fontWeight: '600' },
 });

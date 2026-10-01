@@ -78,12 +78,12 @@ jobs:
       - name: Verify Firebase SDK pin
         working-directory: ios
         run: |
-          if ! grep -q "Firebase/Auth (12.2.0)" Podfile.lock; then
-            echo "::error::Firebase pin to 12.2.0 did not apply — check FIREBASE_SDK_VERSION in Podfile"
+          if ! grep -q "Firebase/Auth (12.18.0)" Podfile.lock; then
+            echo "::error::Firebase pin to 12.18.0 did not apply — check FIREBASE_SDK_VERSION in Podfile"
             grep "Firebase" Podfile.lock | head -5 || true
             exit 1
           fi
-          echo "Firebase 12.2.0 pinned ✓"
+          echo "Firebase 12.18.0 pinned ✓"
 
       - name: Upload Podfile.lock (commit this once green)
         if: always()

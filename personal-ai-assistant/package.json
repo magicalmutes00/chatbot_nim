@@ -1,0 +1,30 @@
+{
+  "name": "personal-ai-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Aurora — cross-platform personal AI assistant (web, desktop, mobile) powered by NVIDIA NIM + Neon Postgres",
+  "workspaces": [
+    "apps/*",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run db:generate -w server",
+    "db:push": "npm run db:push -w server",
+    "db:vector": "npm run db:vector -w server",
+    "db:studio": "npm run db:studio -w server"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}

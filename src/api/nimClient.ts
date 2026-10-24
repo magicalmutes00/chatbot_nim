@@ -1,7 +1,6 @@
-import Config from 'react-native-config';
 import type { NimChatCompletionRequest } from '../types/chat';
 
-const NIM_ENDPOINT = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const BACKEND_URL = 'http://localhost:8787';
 
 /** Whatever the stream produced before it ended (successfully or not). */
 export interface StreamPartial {
@@ -32,15 +31,6 @@ export async function streamChatCompletion(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
-  const apiKey = Config.NVIDIA_API_KEY;
-  if (!apiKey) {
-    callbacks.onError(
-      new Error('NVIDIA_API_KEY is missing. Check your .env file and that react-native-config is linked.'),
-      { fullText: '', fullReasoning: '' },
-    );
-    return;
-  }
-
   await new Promise<void>((resolve) => {
     const xhr = new XMLHttpRequest();
 
@@ -49,6 +39,8 @@ export async function streamChatCompletion(
     let fullText = '';
     let fullReasoning = '';
     let settled = false;
+    let currentEvent = 'message';
+    let currentData: string | null = null;
 
     const partial = (): StreamPartial => ({ fullText, fullReasoning });
 
@@ -71,63 +63,70 @@ export async function streamChatCompletion(
       resolve();
     };
 
-    /** Consumes a raw text chunk; returns true once [DONE] was seen. */
-    const feed = (chunk: string): boolean => {
+    const handleFrame = (eventName: string, data: string) => {
+      try {
+        const payload = JSON.parse(data);
+        if (eventName === 'start') {
+          // conversationId will be handled by caller via UI flow
+          return;
+        }
+        if (eventName === 'delta' && typeof payload.text === 'string') {
+          fullText += payload.text;
+          callbacks.onToken(payload.text);
+        } else if (eventName === 'error') {
+          settleError(new Error(payload.message || 'Backend error'));
+          return;
+        } else if (eventName === 'done') {
+          settleDone();
+          return;
+        }
+      } catch {
+        // ignore malformed frames
+      }
+    };
+
+    const feed = (chunk: string) => {
       buffer += chunk;
       const lines = buffer.split('\n');
-      // keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop() ?? '';
-
       for (const line of lines) {
-        const result = parseSseLine(line);
-        if (result === null) continue;
-        if (result === 'DONE') return true;
-        if (result.contentDelta) {
-          fullText += result.contentDelta;
-          callbacks.onToken(result.contentDelta);
-        }
-        if (result.reasoningDelta) {
-          fullReasoning += result.reasoningDelta;
-          callbacks.onReasoningToken?.(result.reasoningDelta);
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          currentData = line.slice(5).trim();
+        } else if (line === '' && currentData !== null) {
+          handleFrame(currentEvent, currentData);
+          currentEvent = 'message';
+          currentData = null;
         }
       }
-      return false;
     };
 
     signal?.addEventListener('abort', onAbort);
 
-    xhr.open('POST', NIM_ENDPOINT);
+    xhr.open('POST', `${BACKEND_URL}/api/chat`);
     xhr.responseType = 'text';
     xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
     xhr.setRequestHeader('Accept', 'text/event-stream');
 
     xhr.onprogress = () => {
       try {
         const chunk = xhr.responseText.slice(processedLength);
         processedLength = xhr.responseText.length;
-        // A mid-stream [DONE] just stops token callbacks early; the final
-        // settle still happens in onload/onabort below.
         feed(chunk);
-      } catch {
-        // Malformed/partial JSON chunk — safe to skip.
-      }
+      } catch {}
     };
 
     xhr.onload = () => {
       try {
-        // Feed anything not yet delivered plus a newline so the trailing
-        // buffered line ([DONE] or a data line without \n\n) is flushed.
         const chunk = xhr.responseText.slice(processedLength) + '\n';
         processedLength = xhr.responseText.length;
         feed(chunk);
-      } catch {
-        // ignore tail parse errors
-      }
+      } catch {}
       if (xhr.status >= 200 && xhr.status < 300) {
-        settleDone();
+        if (!settled) settleDone();
       } else {
-        settleError(new Error(`NIM API error ${xhr.status}: ${safeBody(xhr.responseText)}`));
+        settleError(new Error(`Backend error ${xhr.status}: ${safeBody(xhr.responseText)}`));
       }
     };
 
@@ -136,7 +135,11 @@ export async function streamChatCompletion(
     xhr.onabort = () =>
       settleError(Object.assign(new Error('Stream cancelled'), { name: 'AbortError' }));
 
-    xhr.send(JSON.stringify({ ...request, stream: true }));
+    const body = {
+      model: request.model,
+      messages: request.messages,
+    };
+    xhr.send(JSON.stringify(body));
   });
 }
 

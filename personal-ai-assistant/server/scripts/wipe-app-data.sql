@@ -1,0 +1,1 @@
+TRUNCATE TABLE public."messages", public."conversations", public."sessions", public."users", public."memories", public."tasks", public."attachments", public."tool_runs", public."usage_events" CASCADE;

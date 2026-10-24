@@ -32,34 +32,16 @@ export interface NimModel {
 
 export const NIM_MODELS: NimModel[] = [
   {
+    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    label: 'Nemotron 3.5 Lightning 30B',
+    description: 'Fast chat model, deep thinking disabled',
+    supportsReasoning: false,
+  },
+  {
     id: 'nvidia/nemotron-3-ultra-550b-a55b',
     label: 'Nemotron 3 Ultra 550B',
-    description: 'Largest Nemotron reasoning model',
+    description: 'Deep thinking model',
     supportsReasoning: true,
-  },
-  {
-    id: 'meta/muse-glimmer-30b',
-    label: 'Muse Glimmer 30B',
-    description: 'Multimodal reasoning, native tool-calling',
-    supportsReasoning: true,
-  },
-  {
-    id: 'deepseek-ai/deepseek-v4.1-flash',
-    label: 'DeepSeek V4.1 Flash',
-    description: 'Fast MoE for coding & agentic chat',
-  },
-  // Image generation — hosted visual-genai endpoints (dot naming, e.g.
-  // flux.1-dev). Verified live: SD 3.5 / schnell are not served for this
-  // account (404 / hang), FLUX.1 Dev is. FLUX rejects `aspect_ratio` but
-  // accepts width/height from the discrete set above.
-  {
-    id: 'black-forest-labs/flux.1-dev',
-    label: 'FLUX.1 Dev',
-    description: 'High-quality image generation',
-    kind: 'image',
-    steps: 50,
-    cfgScale: 5,
-    aspectRatios: FLUX_ASPECT_RATIOS,
   },
 ];
 

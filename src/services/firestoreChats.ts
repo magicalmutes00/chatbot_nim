@@ -1,76 +1,60 @@
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  getFirestore,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  Timestamp,
-  updateDoc,
-  writeBatch,
-} from '@react-native-firebase/firestore';
-import type { CollectionReference } from '@react-native-firebase/firestore';
 import type { Chat, ChatMessage, MessageRole } from '../types/chat';
 
-const db = () => getFirestore();
+const BACKEND_URL = 'http://localhost:8787';
 
-function chatsRef(uid: string): CollectionReference {
-  return collection(db(), 'users', uid, 'chats');
-}
-
-function messagesRef(uid: string, chatId: string): CollectionReference {
-  return collection(db(), 'users', uid, 'chats', chatId, 'messages');
+async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 export async function createChat(uid: string, model: string, initialTitle = 'New chat'): Promise<string> {
-  const now = serverTimestamp();
-  const ref = await addDoc(chatsRef(uid), {
-    title: initialTitle,
-    model,
-    createdAt: now,
-    updatedAt: now,
-  });
-  return ref.id;
+  // Backend creates conversation on first message. Return a temporary id that will be replaced by backend.
+  // For simplicity, return a generated id; the UI will handle conversationId from start event.
+  return `temp-${Date.now()}`;
 }
 
 export async function renameChat(uid: string, chatId: string, title: string): Promise<void> {
-  await updateDoc(doc(chatsRef(uid), chatId), { title, updatedAt: serverTimestamp() });
+  // Not implemented in backend; no-op
 }
 
 export async function deleteChat(uid: string, chatId: string): Promise<void> {
-  // Firestore batches cap at 500 operations, so delete messages in chunks
-  // (Firestore doesn't cascade-delete subcollections).
-  const CHUNK_SIZE = 400;
-  let snap = await getDocs(query(messagesRef(uid, chatId), limit(CHUNK_SIZE)));
-  while (!snap.empty) {
-    const batch = writeBatch(db());
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-    snap = await getDocs(query(messagesRef(uid, chatId), limit(CHUNK_SIZE)));
-  }
-  // Chat doc goes last, only after its messages are gone.
-  await deleteDoc(doc(chatsRef(uid), chatId));
+  await fetchJson(`${BACKEND_URL}/api/conversations/${encodeURIComponent(chatId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export function subscribeToChats(uid: string, onChange: (chats: Chat[]) => void): () => void {
-  return onSnapshot(query(chatsRef(uid), orderBy('updatedAt', 'desc')), (snap) => {
-    const chats: Chat[] = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        title: data.title,
-        model: data.model,
-        createdAt: toMillis(data.createdAt),
-        updatedAt: toMillis(data.updatedAt),
-      };
-    });
-    onChange(chats);
-  });
+  let cancelled = false;
+  const poll = async () => {
+    try {
+      const data = await fetchJson<{ conversations: Array<{ id: string; title: string; updatedAt: string }> }>(
+        `${BACKEND_URL}/api/conversations`,
+      );
+      if (cancelled) return;
+      const chats: Chat[] = data.conversations.map(c => ({
+        id: c.id,
+        title: c.title,
+        model: '',
+        createdAt: new Date(c.updatedAt).getTime(),
+        updatedAt: new Date(c.updatedAt).getTime(),
+      }));
+      onChange(chats);
+    } catch {}
+  };
+  poll();
+  const interval = setInterval(poll, 5000);
+  return () => { cancelled = true; clearInterval(interval); };
 }
 
 export function subscribeToMessages(
@@ -78,22 +62,30 @@ export function subscribeToMessages(
   chatId: string,
   onChange: (messages: ChatMessage[]) => void,
 ): () => void {
-  return onSnapshot(query(messagesRef(uid, chatId), orderBy('createdAt', 'asc')), (snap) => {
-    const messages: ChatMessage[] = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        role: data.role as MessageRole,
-        content: data.content,
-        reasoningContent: data.reasoningContent,
-        imageUri: data.imageUri,
-        imageAspect: data.imageAspect,
-        model: data.model,
-        createdAt: toMillis(data.createdAt),
-      };
-    });
-    onChange(messages);
-  });
+  let cancelled = false;
+  const poll = async () => {
+    if (!chatId.startsWith('temp-')) {
+      try {
+        const data = await fetchJson<{ messages: Array<{ id: string; role: 'USER' | 'ASSISTANT'; content: string; source?: string; createdAt: string }> }>(
+          `${BACKEND_URL}/api/conversations/${encodeURIComponent(chatId)}/messages`,
+        );
+        if (cancelled) return;
+        const messages: ChatMessage[] = data.messages.map(m => ({
+          id: m.id,
+          role: m.role === 'USER' ? 'user' : 'assistant',
+          content: m.content,
+          model: '',
+          createdAt: new Date(m.createdAt).getTime(),
+        }));
+        onChange(messages);
+      } catch {}
+    } else {
+      onChange([]);
+    }
+  };
+  poll();
+  const interval = setInterval(poll, 3000);
+  return () => { cancelled = true; clearInterval(interval); };
 }
 
 export async function addMessage(
@@ -101,17 +93,9 @@ export async function addMessage(
   chatId: string,
   message: Omit<ChatMessage, 'id' | 'createdAt'>,
 ): Promise<void> {
-  const now = serverTimestamp();
-  await addDoc(messagesRef(uid, chatId), { ...message, createdAt: now });
-  await updateDoc(doc(chatsRef(uid), chatId), { updatedAt: now });
+  // Messages are persisted by backend during streaming; no-op here
 }
 
-/** Sets the chat title from the first user message, truncated for display. */
 export async function maybeSetTitleFromFirstMessage(uid: string, chatId: string, firstUserMessage: string) {
-  const title = firstUserMessage.trim().slice(0, 60) || 'New chat';
-  await updateDoc(doc(chatsRef(uid), chatId), { title });
-}
-
-function toMillis(ts: Timestamp | undefined): number {
-  return ts ? ts.toMillis() : Date.now();
+  // Backend handles title generation
 }

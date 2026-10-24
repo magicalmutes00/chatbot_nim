@@ -1,27 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import {
-  createUserWithEmailAndPassword,
-  getAuth,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signInWithCredential,
-  signOut as firebaseSignOut,
-  type User,
-} from '@react-native-firebase/auth';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import Config from 'react-native-config';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// webClientId = OAuth "Web application" client from the same Firebase project
-// (Firebase console → Authentication → Google provider). Provided via .env.
-GoogleSignin.configure({
-  webClientId: Config.GOOGLE_WEB_CLIENT_ID ?? '',
-  offlineAccess: false,
-});
+interface AuthUser {
+  uid: string;
+  email: string;
+}
 
 interface AuthContextValue {
-  user: User | null;
+  user: AuthUser | null;
   initializing: boolean;
   signUp: (email: string, password: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
@@ -32,19 +18,29 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+const AUTH_EMAIL_KEY = 'auth_email';
+const API_BASE = 'http://localhost:8787/api/auth';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
-    // RNFirebase persists the session (AsyncStorage-backed) by default,
-    // so this fires with the restored user on cold start.
-    const unsubscribe = onAuthStateChanged(getAuth(), (firebaseUser) => {
-      setUser(firebaseUser);
-      if (initializing) setInitializing(false);
-    });
-    return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let mounted = true;
+    (async () => {
+      try {
+        const email = await AsyncStorage.getItem(AUTH_EMAIL_KEY);
+        if (mounted) {
+          if (email) {
+            setUser({ uid: 'mobile-user', email });
+          }
+          setInitializing(false);
+        }
+      } catch {
+        if (mounted) setInitializing(false);
+      }
+    })();
+    return () => { mounted = false; };
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -52,36 +48,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       initializing,
       signUp: async (email, password) => {
-        await createUserWithEmailAndPassword(getAuth(), email, password);
+        const res = await fetch(`${API_BASE}/sign-up/email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Sign up failed');
+        }
+        await AsyncStorage.setItem(AUTH_EMAIL_KEY, email);
+        setUser({ uid: 'mobile-user', email });
       },
       signIn: async (email, password) => {
-        await signInWithEmailAndPassword(getAuth(), email, password);
+        const res = await fetch(`${API_BASE}/sign-in/email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Sign in failed');
+        }
+        await AsyncStorage.setItem(AUTH_EMAIL_KEY, email);
+        setUser({ uid: 'mobile-user', email });
       },
       signInWithGoogle: async () => {
-        if (!Config.GOOGLE_WEB_CLIENT_ID) {
-          throw new Error(
-            'Google Sign-In is not configured. Add GOOGLE_WEB_CLIENT_ID to .env (Web application OAuth client of this Firebase project) and rebuild.',
-          );
-        }
-        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-        const result = await GoogleSignin.signIn();
-        if (result.type === 'cancelled') return;
-        const idToken = result.data?.idToken;
-        if (!idToken) {
-          throw new Error('Google Sign-In returned no idToken. Check GOOGLE_WEB_CLIENT_ID in .env.');
-        }
-        await signInWithCredential(getAuth(), GoogleAuthProvider.credential(idToken));
+        throw new Error('Google Sign-In has been removed');
       },
       signOut: async () => {
         try {
-          await GoogleSignin.signOut();
-        } catch {
-          // Not signed in via Google — ignore.
-        }
-        await firebaseSignOut(getAuth());
+          await fetch(`${API_BASE}/sign-out`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+        } catch {}
+        await AsyncStorage.removeItem(AUTH_EMAIL_KEY);
+        setUser(null);
       },
       resetPassword: async (email) => {
-        await sendPasswordResetEmail(getAuth(), email);
+        throw new Error('Password reset is not supported in Neon Auth flow');
       },
     }),
     [user, initializing],

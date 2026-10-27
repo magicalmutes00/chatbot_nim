@@ -15,6 +15,7 @@ export const NIM_MODELS = [
     label: "Nemotron Lightning 30B",
     tag: "Fast",
     thinking: false,
+    vision: false,
     maxTokens: 2048,
   },
   {
@@ -22,6 +23,39 @@ export const NIM_MODELS = [
     label: "Nemotron Ultra 550B",
     tag: "Deep thinking",
     thinking: true,
+    vision: false,
+    maxTokens: 8192,
+  },
+  {
+    id: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    label: "Nemotron Super VL 120B",
+    tag: "Vision",
+    thinking: false,
+    vision: true,
+    maxTokens: 4096,
+  },
+  {
+    id: "minimaxai/minimax-m3.1-flash",
+    label: "MiniMax M3.1 Flash",
+    tag: "Vision · thorough",
+    thinking: true,
+    vision: true,
+    maxTokens: 4096,
+  },
+  {
+    id: "z-ai/glm-5.3-flash",
+    label: "GLM 5.3 Flash",
+    tag: "GLM",
+    thinking: true,
+    vision: false,
+    maxTokens: 4096,
+  },
+  {
+    id: "z-ai/glm-5.3",
+    label: "GLM 5.3",
+    tag: "GLM · deep",
+    thinking: true,
+    vision: false,
     maxTokens: 8192,
   },
 ] as const;
@@ -30,9 +64,13 @@ type ModelMeta = (typeof NIM_MODELS)[number];
 
 export type ChatRole = "system" | "user" | "assistant";
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatTurn {
   role: ChatRole;
-  content: string;
+  content: string | ChatContentPart[];
 }
 
 export class NimError extends Error {

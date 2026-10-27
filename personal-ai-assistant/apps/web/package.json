@@ -6,12 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:desktop": "tsc --noEmit && vite build --mode desktop",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@neondatabase/auth-ui": "^0.4.0-beta",
-    "@neondatabase/neon-js": "^0.9.0-beta",
+    "firebase": "^12.19.0",
     "highlight.js": "^11.11.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

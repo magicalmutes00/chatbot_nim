@@ -19,8 +19,7 @@ export function SparkIcon({ className = "size-4" }: IconProps) {
   );
 }
 
-export function PlusIcon({ className = "size-4" }: IconProps) {
-  return (
+export function PlusIcon({ className = "size-4" }: IconProps) {  return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className} aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
     </svg>
@@ -111,6 +110,30 @@ export function PaperclipIcon({ className = "size-4" }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
+export function ChecklistIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="m3.5 6.5 1.8 1.8L9 4.6" />
+      <path d="M12.5 6.5H21" />
+      <path d="m3.5 13.5 1.8 1.8L9 11.6" />
+      <path d="M12.5 13.5H21" />
+      <path d="M12.5 20H21" />
+      <path d="M4.4 19.1 5.3 20l1.8-1.8" />
+    </svg>
+  );
+}
+
+export function BrainIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 7.1a3 3 0 0 0-1 4.6 3 3 0 0 0 1.4 4.3A2.9 2.9 0 0 0 7 19.9a3 3 0 0 0 5 1.6" />
+      <path d="M12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 7.1a3 3 0 0 1 1 4.6 3 3 0 0 1-1.4 4.3A2.9 2.9 0 0 1 17 19.9a3 3 0 0 1-5 1.6" />
+      <path d="M12 5.5v16" />
+      <path d="M8.5 9.5c1.2 0 2 .8 2 2M15.5 13.5c-1.2 0-2-.8-2-2" />
     </svg>
   );
 }

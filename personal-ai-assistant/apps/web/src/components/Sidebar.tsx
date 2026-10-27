@@ -1,5 +1,5 @@
 import type { ConversationSummary } from "../lib/api";
-import { LogOutIcon, PlusIcon, SearchIcon, SettingsIcon, SparkIcon, XIcon } from "./Icons";
+import { BrainIcon, ChecklistIcon, LogOutIcon, PlusIcon, SearchIcon, SettingsIcon, SparkIcon, XIcon } from "./Icons";
 
 type SidebarProps = {
   mode: "connected" | "local";
@@ -9,7 +9,12 @@ type SidebarProps = {
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
+  onOpenMemory: () => void;
+  onOpenTasks: () => void;
+  taskCount?: number;
   onSignOut: () => void;
+  open?: boolean;
+  onClose?: () => void;
 };
 
 const GROUPS = ["Today", "Yesterday", "Previous 7 days", "Older"] as const;
@@ -34,12 +39,19 @@ export default function Sidebar({
   onNewChat,
   onSelectConversation,
   onDeleteConversation,
+  onOpenMemory,
+  onOpenTasks,
+  taskCount = 0,
   onSignOut,
+  open,
+  onClose,
 }: SidebarProps) {
   const initial = (user?.name?.[0] ?? "G").toUpperCase();
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-ink-800 bg-ink-900">
+    <>
+      <aside className={`fixed inset-y-0 left-0 z-40 w-72 flex flex-col border-r border-ink-800 bg-ink-900 transition-transform duration-300 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      
       {/* Brand */}
       <div className="flex items-center gap-2.5 px-5 pb-4 pt-5">
         <SparkIcon className="size-6" />
@@ -68,7 +80,32 @@ export default function Sidebar({
         >
           <SearchIcon className="size-4" />
           Search chats
-          <kbd className="ml-auto rounded px-1 text-[10px] text-ink-500 ring-1 ring-ink-700">⌘K</kbd>
+          <span className="ml-auto rounded-md bg-ink-800 px-1.5 py-0.5 text-[10px] font-medium text-ink-400 ring-1 ring-ink-700">⌘K</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenMemory}
+          disabled={mode === "local"}
+          title={mode === "local" ? "Memory needs a database connection" : "Review what Aurora remembers"}
+          className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-sm text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:cursor-not-allowed disabled:text-ink-500 disabled:hover:bg-transparent"
+        >
+          <BrainIcon className="size-4" />
+          Memory
+        </button>
+        <button
+          type="button"
+          onClick={onOpenTasks}
+          disabled={mode === "local"}
+          title={mode === "local" ? "Tasks need a database connection" : "Your to-dos and reminders"}
+          className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-sm text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100 disabled:cursor-not-allowed disabled:text-ink-500 disabled:hover:bg-transparent"
+        >
+          <ChecklistIcon className="size-4" />
+          Tasks
+          {taskCount > 0 && (
+            <span className="ml-auto rounded-md bg-accent-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent-300 ring-1 ring-accent-500/25">
+              {taskCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -164,5 +201,6 @@ export default function Sidebar({
         </div>
       </div>
     </aside>
+    </>
   );
 }

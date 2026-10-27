@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { isDbConfigured, isNeonAuthConfigured } from "../config/env.js";
+import { env, isDbConfigured, isFirebaseAuthConfigured, isS3Configured } from "../config/env.js";
 import { prisma } from "../db/prisma.js";
 import { nim } from "../ai/nim.js";
 
@@ -21,7 +21,8 @@ export async function healthRoutes(app: FastifyInstance) {
       version: "0.1.0",
       database,
       nim: { configured: nim.configured, baseUrl: nim.baseUrl },
-      auth: { mode: isNeonAuthConfigured ? "neon-auth" : "none" },
+      auth: { mode: isFirebaseAuthConfigured ? "firebase" : "none" },
+      storage: { configured: isS3Configured, bucket: isS3Configured ? env.s3Bucket : null },
       time: new Date().toISOString(),
     };
   });

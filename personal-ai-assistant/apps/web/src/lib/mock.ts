@@ -22,7 +22,49 @@ export const MODELS: ModelOption[] = [
     tag: "Deep thinking",
     description: "Flagship reasoning for hard problems",
   },
+  {
+    id: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    name: "Nemotron Super VL 120B",
+    tag: "Vision",
+    vision: true,
+    description: "Reads images, charts, and screenshots — fast",
+  },
+  {
+    id: "minimaxai/minimax-m3.1-flash",
+    name: "MiniMax M3.1 Flash",
+    tag: "Vision · thorough",
+    vision: true,
+    description: "Careful image understanding for complex scenes",
+  },
+  {
+    id: "z-ai/glm-5.3-flash",
+    name: "GLM 5.3 Flash",
+    tag: "GLM · slow",
+    description: "Z.ai's quick model — NIM may queue it ~2 min before replying",
+  },
+  {
+    id: "z-ai/glm-5.3",
+    name: "GLM 5.3",
+    tag: "GLM · slow",
+    description: "Z.ai's flagship model — NIM may queue it ~4–5 min before replying",
+  },
+  {
+    id: "black-forest-labs/flux.1-dev",
+    name: "FLUX.1 Dev",
+    tag: "Image",
+    kind: "image",
+    description: "Paints detailed, art-directed images from a prompt",
+  },
 ];
+
+/** Aspect presets understood by the image route. */
+export const IMAGE_SIZE_OPTIONS = [
+  { id: "1:1", label: "1:1" },
+  { id: "16:9", label: "16:9" },
+  { id: "9:16", label: "9:16" },
+] as const;
+
+export type ImageSizeOption = (typeof IMAGE_SIZE_OPTIONS)[number]["id"];
 
 export type ConversationGroup = "Today" | "Yesterday" | "Previous 7 days";
 

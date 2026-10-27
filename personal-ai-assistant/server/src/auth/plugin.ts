@@ -1,9 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
-
-export const SESSION_COOKIE = "better-auth.session_token";
-const SECURE_SESSION_COOKIE = `__Secure-${SESSION_COOKIE}`;
+import { verifyFirebaseIdToken } from "./firebase.js";
 
 export interface SessionUser {
   id: string;
@@ -17,57 +14,33 @@ declare module "fastify" {
   }
 }
 
-interface AuthRow {
-  userId: string;
-  email: string;
-  name: string | null;
-}
-
 /**
- * Validates a Neon Auth (Managed Better Auth) session.
+ * Validates the Firebase ID token sent in `Authorization: Bearer <token>`.
  *
- * The auth tables live in our own Postgres (schema `neon_auth`), so the
- * session cookie's token is verified with a single local SQL lookup —
- * no round-trip to the auth server.
+ * The client refreshes the token itself (the Firebase SDK caches it), so the
+ * server only has to verify the signature and mirror the account into
+ * `public.users`. Rows are matched by email so accounts created during the
+ * Neon Auth era keep their conversations, memories, and tasks.
  */
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const rawCandidates = [request.cookies[SESSION_COOKIE], request.cookies[SECURE_SESSION_COOKIE]].filter(
-    (v): v is string => typeof v === "string" && v.length > 0,
-  );
+  const header = request.headers.authorization ?? "";
+  const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
 
-  // Better Auth signs cookie values ("<token>.<signature>") — try the bare token too.
-  const candidates = new Set<string>();
-  for (const raw of rawCandidates) {
-    candidates.add(raw);
-    const dot = raw.indexOf(".");
-    if (dot > 0) candidates.add(raw.slice(0, dot));
-  }
-
-  if (candidates.size === 0) {
+  if (token.length === 0) {
     void reply.code(401).send({ error: "Not signed in." });
     return;
   }
 
-  const tokenList = Prisma.join([...candidates].map((c) => Prisma.sql`${c}`));
-  const rows = await prisma.$queryRaw<AuthRow[]>(Prisma.sql`
-    SELECT s."userId" AS "userId", u.email AS email, u.name AS name
-    FROM neon_auth.session s
-    JOIN neon_auth."user" u ON u."id" = s."userId"
-    WHERE s."token" IN (${tokenList}) AND s."expiresAt" > now()
-    LIMIT 1
-  `);
-
-  const row = rows[0];
-  if (!row) {
+  const identity = await verifyFirebaseIdToken(token);
+  if (!identity) {
     void reply.code(401).send({ error: "Session expired — sign in again." });
     return;
   }
 
-  // Mirror the auth user into public.users (our settings/preferences home).
   const user = await prisma.user.upsert({
-    where: { id: row.userId },
-    update: { email: row.email, name: row.name },
-    create: { id: row.userId, email: row.email, name: row.name },
+    where: { email: identity.email },
+    update: { name: identity.name ?? undefined },
+    create: { id: identity.uid, email: identity.email, name: identity.name },
   });
 
   request.user = { id: user.id, email: user.email, name: user.name };

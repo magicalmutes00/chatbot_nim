@@ -92,9 +92,10 @@ model Memory {
   userId    String
   content   String
   source    MemorySource              @default(MANUAL)
-  // pgvector column — similarity search happens via raw SQL (Phase 5).
-  // Dimension 1024 matches NVIDIA NIM embeddings (nv-embedqa-e5-v5).
-  embedding Unsupported("vector(1024)")?
+  // pgvector column — similarity search happens via raw SQL (Phase 10).
+  // 2048 dimensions matches NVIDIA NIM embeddings (nemotron-3.5-embed-1b).
+  // `halfvec` because HNSW indexes only support up to 2000 `vector` dimensions.
+  embedding Unsupported("halfvec(2048)")?
   createdAt DateTime                  @default(now())
   updatedAt DateTime                  @updatedAt
   user      User                      @relation(fields: [userId], references: [id], onDelete: Cascade)

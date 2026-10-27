@@ -18,6 +18,7 @@
     "db:generate": "npm run db:generate -w server",
     "db:push": "npm run db:push -w server",
     "db:vector": "npm run db:vector -w server",
+    "db:memory": "npm run db:memory -w server",
     "db:studio": "npm run db:studio -w server"
   },
   "allowScripts": {

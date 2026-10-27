@@ -5,13 +5,28 @@ jest.mock('react-native-gesture-handler', () =>
   require('react-native-gesture-handler/jestSetup'),
 );
 
-jest.mock('@react-native-firebase/auth', () => ({
-  getAuth: jest.fn(() => ({})),
-  onAuthStateChanged: jest.fn(() => jest.fn()),
-  createUserWithEmailAndPassword: jest.fn(),
-  signInWithEmailAndPassword: jest.fn(),
-  signOut: jest.fn(),
-  sendPasswordResetEmail: jest.fn(),
+jest.mock('@react-native-firebase/auth', () => {
+  const instance = { currentUser: null };
+  return {
+    __esModule: true,
+    getAuth: jest.fn(() => instance),
+    onAuthStateChanged: jest.fn(() => jest.fn()),
+    createUserWithEmailAndPassword: jest.fn(),
+    signInWithEmailAndPassword: jest.fn(),
+    signInWithCredential: jest.fn(),
+    sendPasswordResetEmail: jest.fn(),
+    signOut: jest.fn(),
+    GoogleAuthProvider: { credential: jest.fn(() => ({})) },
+  };
+});
+
+jest.mock('@react-native-google-signin/google-signin', () => ({
+  GoogleSignin: {
+    configure: jest.fn(),
+    hasPlayServices: jest.fn(async () => true),
+    signIn: jest.fn(async () => ({ type: 'cancelled' })),
+    signOut: jest.fn(async () => null),
+  },
 }));
 
 jest.mock('@react-native-firebase/firestore', () => ({
@@ -31,4 +46,22 @@ jest.mock('@react-native-firebase/firestore', () => ({
   Timestamp: class Timestamp {},
 }));
 
-jest.mock('react-native-config', () => ({}));
+jest.mock('react-native-config', () => ({
+  __esModule: true,
+  default: { GOOGLE_WEB_CLIENT_ID: 'test-client-id' },
+}));
+
+jest.mock('react-native-blob-util', () => ({
+  __esModule: true,
+  default: {
+    fs: {
+      dirs: { CacheDir: '/tmp', DocumentDir: '/tmp', PictureDir: '/tmp' },
+      writeFile: jest.fn(async () => undefined),
+      unlink: jest.fn(async () => undefined),
+    },
+  },
+}));
+
+jest.mock('@react-native-camera-roll/camera-roll', () => ({
+  CameraRoll: { save: jest.fn(async () => 'file:///tmp/test.jpg') },
+}));

@@ -1,6 +1,6 @@
-// Models available in the app. Chat models use the OpenAI-compatible
-// /v1/chat/completions endpoint; image models (kind: 'image') use the hosted
-// visual-genai endpoints at https://ai.api.nvidia.com/v1/genai/{id}.
+// Models available in the app. Every call goes through the Aurora backend so
+// the NIM key stays server-side: chat models stream from POST /api/chat and
+// image models (kind: 'image') are rendered by POST /api/images/generate.
 // NVIDIA retires models regularly — if replies stop coming, re-check the endpoint.
 
 export interface AspectRatioOption {
@@ -9,12 +9,11 @@ export interface AspectRatioOption {
   height: number;
 }
 
-// Discrete dimensions the hosted FLUX endpoint accepts (validated live —
-// it rejects anything outside this 768…1344 set, so ratios use nearest fits).
+// Presets understood by the backend image route (server/src/ai/imagegen.ts).
+// Keep the labels in sync with its IMAGE_SIZES keys — the label is the `size`
+// sent with the request.
 export const FLUX_ASPECT_RATIOS: AspectRatioOption[] = [
   { label: '1:1', width: 1024, height: 1024 },
-  { label: '4:3', width: 1024, height: 768 },
-  { label: '3:4', width: 768, height: 1024 },
   { label: '16:9', width: 1344, height: 768 },
   { label: '9:16', width: 768, height: 1344 },
 ];
@@ -24,6 +23,7 @@ export interface NimModel {
   label: string; // shown in the UI
   description?: string;
   supportsReasoning?: boolean; // whether it may return `reasoning_content`
+  vision?: boolean; // whether it can read image attachments
   kind?: 'chat' | 'image'; // defaults to 'chat'
   steps?: number; // image models: diffusion steps
   cfgScale?: number; // image models: guidance scale
@@ -42,6 +42,27 @@ export const NIM_MODELS: NimModel[] = [
     label: 'Nemotron 3 Ultra 550B',
     description: 'Deep thinking model',
     supportsReasoning: true,
+  },
+  {
+    id: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    label: 'Nemotron Super VL 120B',
+    description: 'Reads images, charts, and screenshots — fast',
+    vision: true,
+  },
+  {
+    id: 'minimaxai/minimax-m3.1-flash',
+    label: 'MiniMax M3.1 Flash',
+    description: 'Careful image understanding for complex scenes',
+    supportsReasoning: true,
+    vision: true,
+  },
+  {
+    id: 'black-forest-labs/flux.1-dev',
+    label: 'FLUX.1 Dev',
+    description: 'Paints detailed, art-directed images from a prompt',
+    kind: 'image',
+    steps: 20,
+    aspectRatios: FLUX_ASPECT_RATIOS,
   },
 ];
 

@@ -1,6 +1,5 @@
-import type { NimChatCompletionRequest } from '../types/chat';
-
-const BACKEND_URL = 'http://localhost:8787';
+import type { ChatAttachment, NimChatCompletionRequest } from '../types/chat';
+import { BACKEND_URL, authHeaders } from './backend';
 
 /** Whatever the stream produced before it ended (successfully or not). */
 export interface StreamPartial {
@@ -11,26 +10,37 @@ export interface StreamPartial {
 export interface StreamCallbacks {
   onToken: (delta: string) => void;
   onReasoningToken?: (delta: string) => void;
+  /** The server's persisted conversation id, sent before the first token. */
+  onStart?: (conversationId: string) => void;
   onDone: (fullText: string, fullReasoning: string) => void;
   /** Called on any failure; `partial` carries whatever arrived before the error. */
   onError: (err: Error, partial: StreamPartial) => void;
 }
 
 /**
- * Streams a chat completion from NVIDIA NIM directly from the client.
+ * Streams a chat completion through the Aurora backend (`POST /api/chat`),
+ * which proxies NVIDIA NIM and keeps the API key server-side.
  *
  * RN STREAMING NOTE: React Native's `fetch` does not reliably expose a
  * readable `response.body` (`getReader()`) across RN/Hermes versions. Instead
  * of depending on it, this uses XMLHttpRequest incremental delivery: RN fires
  * `xhr.onprogress` as chunks arrive and accumulates them in `responseText`,
- * which works on every supported RN version — no polyfills needed. The SSE
- * parsing is shared between both concerns via `feed()`/`parseSseLine`.
+ * which works on every supported RN version — no polyfills needed.
  */
 export async function streamChatCompletion(
-  request: Omit<NimChatCompletionRequest, 'stream'>,
+  request: Omit<NimChatCompletionRequest, 'stream'> & {
+    conversationId?: string;
+    attachments?: ChatAttachment[];
+  },
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
+  // XHR cannot await: build the authenticated headers before opening the request.
+  const headers = await authHeaders({
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  });
+
   await new Promise<void>((resolve) => {
     const xhr = new XMLHttpRequest();
 
@@ -67,7 +77,9 @@ export async function streamChatCompletion(
       try {
         const payload = JSON.parse(data);
         if (eventName === 'start') {
-          // conversationId will be handled by caller via UI flow
+          if (typeof payload.conversationId === 'string') {
+            callbacks.onStart?.(payload.conversationId);
+          }
           return;
         }
         if (eventName === 'delta' && typeof payload.text === 'string') {
@@ -106,8 +118,9 @@ export async function streamChatCompletion(
 
     xhr.open('POST', `${BACKEND_URL}/api/chat`);
     xhr.responseType = 'text';
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('Accept', 'text/event-stream');
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
 
     xhr.onprogress = () => {
       try {
@@ -138,32 +151,13 @@ export async function streamChatCompletion(
     const body = {
       model: request.model,
       messages: request.messages,
+      ...(request.conversationId ? { conversationId: request.conversationId } : {}),
+      ...(request.attachments && request.attachments.length > 0
+        ? { attachments: request.attachments }
+        : {}),
     };
     xhr.send(JSON.stringify(body));
   });
-}
-
-type SseParseResult = { contentDelta?: string; reasoningDelta?: string } | 'DONE' | null;
-
-function parseSseLine(rawLine: string): SseParseResult {
-  const line = rawLine.trim();
-  if (!line || !line.startsWith('data:')) return null;
-
-  const payload = line.slice('data:'.length).trim();
-  if (payload === '[DONE]') return 'DONE';
-
-  try {
-    const json = JSON.parse(payload);
-    const delta = json?.choices?.[0]?.delta;
-    if (!delta) return null;
-    return {
-      contentDelta: typeof delta.content === 'string' ? delta.content : undefined,
-      reasoningDelta: typeof delta.reasoning_content === 'string' ? delta.reasoning_content : undefined,
-    };
-  } catch {
-    // Malformed/partial JSON chunk — safe to skip, next chunk will complete it
-    return null;
-  }
 }
 
 function safeBody(text: string | undefined): string {

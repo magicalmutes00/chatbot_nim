@@ -17,12 +17,14 @@ import {
   ScrollView,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
+import { launchImageLibrary } from 'react-native-image-picker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
 import { useChatStore } from '../store/chatStore';
 import { streamChatCompletion } from '../api/nimClient';
 import { generateImage } from '../api/nimImageClient';
+import { uploadImage } from '../api/attachments';
 import { NIM_MODELS, getModelById } from '../config/nimModels';
 import {
   addMessage,
@@ -30,15 +32,23 @@ import {
   subscribeToMessages,
 } from '../services/firestoreChats';
 import { ensureGalleryPermission, saveImageToGallery } from '../services/imageSave';
+import { rememberImageAspect } from '../services/imageAspects';
 import { Background } from '../components/Background';
 import { TypingDots } from '../components/TypingDots';
 import { radius, spacing, type ThemeColors } from '../theme/tokens';
 import { useTheme } from '../theme/ThemeContext';
-import type { ChatMessage } from '../types/chat';
+import type { ChatAttachment, ChatMessage } from '../types/chat';
 
 type Props = NativeStackScreenProps<MainStackParamList, 'Chat'>;
 
 const PANEL_WIDTH = 290;
+
+/** Uploaded image kept alongside a local preview URI for the optimistic bubble. */
+interface PendingImage extends ChatAttachment {
+  previewUri: string;
+  width?: number;
+  height?: number;
+}
 
 export default function ChatScreen({ route, navigation }: Props) {
   const { user } = useAuth();
@@ -74,6 +84,8 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  const [picking, setPicking] = useState(false);
   /** Messages shown instantly before Firestore confirms them. */
   const [optimistic, setOptimistic] = useState<ChatMessage[]>([]);
 
@@ -86,6 +98,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   useEffect(() => {
     reset();
     setOptimistic([]);
+    setPendingImage(null);
     if (passedChatId) setActiveChatId(passedChatId);
     return () => {
       abortRef.current?.abort();
@@ -100,9 +113,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       serverMessagesRef.current = msgs;
       setMessages(msgs);
       // Drop optimistic copies once the persisted versions arrive.
-      setOptimistic((pending) =>
-        pending.filter((p) => !msgs.some((m) => m.role === p.role && m.content === p.content)),
-      );
+      setOptimistic((pending) => pending.filter((p) => !msgs.some((m) => isSameMessage(p, m))));
     });
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,7 +122,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const visibleMessages = useMemo(
     () => [
       ...messages,
-      ...optimistic.filter((p) => !messages.some((m) => m.role === p.role && m.content === p.content)),
+      ...optimistic.filter((p) => !messages.some((m) => isSameMessage(p, m))),
     ],
     [messages, optimistic],
   );
@@ -145,14 +156,98 @@ export default function ChatScreen({ route, navigation }: Props) {
     });
   };
 
+  /**
+   * Picks one photo, uploads it to S3, and switches to a vision model.
+   *
+   * Upload happens on selection (like the web composer) so the send step only
+   * has to forward the stored key. The picker returns base64 because React
+   * Native cannot stream a gallery URI into an S3 PUT.
+   */
+  const pickImage = async () => {
+    if (picking || isStreaming || isImageModel) return;
+    setPicking(true);
+    setError(null);
+
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'photo',
+        selectionLimit: 1,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        quality: 0.8,
+        includeBase64: true,
+        assetRepresentationMode: 'compatible',
+      });
+
+      if (result.didCancel) return;
+      if (result.errorCode) {
+        setError(
+          result.errorMessage ??
+            (result.errorCode === 'permission'
+              ? 'Photo library access is needed to attach an image.'
+              : 'Could not open the photo library.'),
+        );
+        return;
+      }
+
+      const asset = result.assets?.[0];
+      if (!asset?.base64) {
+        setError('That photo could not be read. Try another image.');
+        return;
+      }
+
+      const mimeType = (asset.type ?? 'image/jpeg').toLowerCase();
+      const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+      const uploaded = await uploadImage({
+        base64: asset.base64,
+        mimeType,
+        filename: asset.fileName ?? `photo-${Date.now()}.${ext}`,
+      });
+
+      if (asset.width && asset.height) {
+        rememberImageAspect(uploaded.key, asset.width / asset.height);
+      }
+
+      setPendingImage({
+        ...uploaded,
+        previewUri: asset.uri ?? `data:${uploaded.mimeType};base64,${asset.base64}`,
+        width: asset.width,
+        height: asset.height,
+      });
+
+      // Only vision models can read an attached picture.
+      if (!getModelById(selectedModel)?.vision) {
+        const visionModel = NIM_MODELS.find((m) => m.vision);
+        if (visionModel) setSelectedModel(visionModel.id);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not upload that image.');
+    } finally {
+      setPicking(false);
+    }
+  };
+
   const handleSend = async () => {
-    if (!user || !input.trim() || isStreaming) return;
+    if (!user || !input.trim() || isStreaming || picking) return;
     const chatId = activeChatId ?? passedChatId;
     if (!chatId) return;
 
     const text = input.trim();
+    const sentImage = pendingImage;
     setInput('');
     setError(null);
+    if (sentImage) setPendingImage(null);
+
+    // Re-check at send time: the user may have switched back to a text model
+    // after attaching, which the server would reject.
+    let chatModel = selectedModel;
+    if (sentImage && !getModelById(chatModel)?.vision) {
+      const visionModel = NIM_MODELS.find((m) => m.vision);
+      if (visionModel) {
+        chatModel = visionModel.id;
+        setSelectedModel(visionModel.id);
+      }
+    }
 
     const isFirstMessage =
       serverMessagesRef.current.length === 0 && !optimistic.some((m) => m.role === 'user');
@@ -161,9 +256,15 @@ export default function ChatScreen({ route, navigation }: Props) {
       id: `local-user-${Date.now()}`,
       role: 'user',
       content: text,
-      model: selectedModel,
+      model: chatModel,
       createdAt: Date.now(),
     };
+    if (sentImage) {
+      userMsg.imageUri = sentImage.previewUri;
+      if (sentImage.width && sentImage.height) {
+        userMsg.imageAspect = sentImage.width / sentImage.height;
+      }
+    }
     setOptimistic((prev) => [...prev, userMsg]);
     scrollToEnd();
 
@@ -174,7 +275,7 @@ export default function ChatScreen({ route, navigation }: Props) {
       await addMessage(user.uid, chatId, {
         role: 'user',
         content: text,
-        model: selectedModel,
+        model: chatModel,
       });
     } catch {
       setError('Could not save your message.');
@@ -182,7 +283,7 @@ export default function ChatScreen({ route, navigation }: Props) {
 
     // Image models take a prompt, not chat history — run that flow instead.
     if (isImageModel) {
-      await runImageGeneration(text, chatId, user.uid);
+      await runImageGeneration(text, chatId);
       return;
     }
 
@@ -195,8 +296,29 @@ export default function ChatScreen({ route, navigation }: Props) {
     abortRef.current = controller;
 
     await streamChatCompletion(
-      { model: selectedModel, messages: history },
       {
+        model: chatModel,
+        messages: history,
+        conversationId: chatId.startsWith('temp-') ? undefined : chatId,
+        ...(sentImage
+          ? {
+              attachments: [
+                {
+                  key: sentImage.key,
+                  filename: sentImage.filename,
+                  mimeType: sentImage.mimeType,
+                  sizeBytes: sentImage.sizeBytes,
+                },
+              ],
+            }
+          : {}),
+      },
+      {
+        onStart: (conversationId) => {
+          // The first turn creates the conversation server-side; adopt its id so
+          // later turns append to it and the history poll starts working.
+          setActiveChatId(conversationId);
+        },
         onToken: appendStreamToken,
         onReasoningToken: appendReasoningToken,
         onDone: async (fullText, fullReasoning) => {
@@ -207,7 +329,7 @@ export default function ChatScreen({ route, navigation }: Props) {
             role: 'assistant',
             content: savedContent,
             reasoningContent: fullReasoning || undefined,
-            model: selectedModel,
+            model: chatModel,
             createdAt: Date.now(),
           };
           setOptimistic((prev) => [...prev, assistantMsg]);
@@ -220,7 +342,7 @@ export default function ChatScreen({ route, navigation }: Props) {
               content: string;
               model: string;
               reasoningContent?: string;
-            } = { role: 'assistant', content: savedContent, model: selectedModel };
+            } = { role: 'assistant', content: savedContent, model: chatModel };
             if (fullReasoning) assistantPayload.reasoningContent = fullReasoning;
             await addMessage(user.uid, chatId, assistantPayload);
           } catch {
@@ -243,7 +365,7 @@ export default function ChatScreen({ route, navigation }: Props) {
                 role: 'assistant',
                 content: partial.fullText || partial.fullReasoning?.trim() || '(partial response)',
                 reasoningContent: partial.fullReasoning || undefined,
-                model: selectedModel,
+                model: chatModel,
                 createdAt: Date.now(),
               },
             ]);
@@ -258,7 +380,7 @@ export default function ChatScreen({ route, navigation }: Props) {
               } = {
                 role: 'assistant',
                 content: partial.fullText || partial.fullReasoning?.trim() || '(partial response)',
-                model: selectedModel,
+                model: chatModel,
               };
               if (partial.fullReasoning) partialPayload.reasoningContent = partial.fullReasoning;
               addMessage(user.uid, chatIdNow, partialPayload).catch(() => {});
@@ -270,8 +392,8 @@ export default function ChatScreen({ route, navigation }: Props) {
     );
   };
 
-  /** Image-model flow: one prompt in, one image back (no streaming tokens). */
-  const runImageGeneration = async (prompt: string, chatId: string, uid: string) => {
+  /** Image-model flow: one prompt in, one stored image back (no streaming tokens). */
+  const runImageGeneration = async (prompt: string, chatId: string) => {
     startStreaming();
     setImageBusy(true);
     scrollToEnd();
@@ -280,47 +402,36 @@ export default function ChatScreen({ route, navigation }: Props) {
     abortRef.current = controller;
 
     try {
-      const uri = await generateImage(
+      const result = await generateImage(
         {
           model: selectedModel,
           prompt,
-          width: imageAspect.width,
-          height: imageAspect.height,
+          size: imageAspect.label,
+          // A temp id means the conversation does not exist yet; the server
+          // creates it and returns the real id.
+          conversationId: chatId.startsWith('temp-') ? undefined : chatId,
         },
         controller.signal,
       );
+
+      // Adopt the server's conversation id so later turns append to it and the
+      // history poll picks up the generated image.
+      setActiveChatId(result.conversationId);
+      rememberImageAspect(result.image.key, imageAspect.width / imageAspect.height);
+
       const assistantMsg: ChatMessage = {
-        id: `local-assistant-${Date.now()}`,
+        // The server already persisted this reply; reusing its id lets the poll
+        // replace the optimistic copy instead of rendering both.
+        id: result.messageId,
         role: 'assistant',
         content: '',
-        imageUri: uri,
+        imageUri: result.image.url,
         imageAspect: imageAspect.width / imageAspect.height,
-        model: selectedModel,
+        model: result.model,
         createdAt: Date.now(),
       };
       setOptimistic((prev) => [...prev, assistantMsg]);
       scrollToEnd();
-
-      // Firestore docs cap at 1 MiB — skip persisting oversized images.
-      const persistable = uri.length <= 700_000;
-      try {
-        const payload: {
-          role: 'assistant';
-          content: string;
-          model: string;
-          imageUri?: string;
-          imageAspect?: number;
-        } = {
-          role: 'assistant',
-          content: persistable ? '' : '(image shown this session only — too large to save)',
-          model: selectedModel,
-          imageAspect: imageAspect.width / imageAspect.height,
-        };
-        if (persistable) payload.imageUri = uri;
-        await addMessage(uid, chatId, payload);
-      } catch {
-        setError('Image could not be saved.');
-      }
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
         setError(e?.message ?? 'Image generation failed');
@@ -389,7 +500,7 @@ export default function ChatScreen({ route, navigation }: Props) {
                   style={[styles.messageImage, { aspectRatio: item.imageAspect ?? 1 }]}
                   resizeMode="cover"
                 />
-                {item.imageUri.startsWith('data:') ? (
+                {canSaveImage(item.imageUri) ? (
                   <Pressable
                     disabled={savingId === item.id}
                     onPress={() => handleSaveImage(item)}
@@ -425,8 +536,8 @@ export default function ChatScreen({ route, navigation }: Props) {
       <Text style={styles.emptyTitle}>How can I help today?</Text>
       <Text style={styles.emptyHint}>
         {isImageModel
-          ? 'Describe an image, pick a ratio below, then tap Create.'
-          : 'Ask anything — replies stream in as they are generated. Long-press a reply to copy it.'}
+          ? 'Describe an image, pick a ratio below, then tap send.'
+          : 'Ask anything, or attach a photo with + — replies stream in as they are generated. Long-press a reply to copy it.'}
       </Text>
       <Text style={styles.emptyModel}>Model: {getModelById(selectedModel)?.label ?? selectedModel}</Text>
     </View>
@@ -521,8 +632,54 @@ export default function ChatScreen({ route, navigation }: Props) {
           </ScrollView>
         )}
 
+        {/* Attachment preview (uploaded before send) */}
+        {pendingImage ? (
+          <View style={styles.attachRow}>
+            <View style={styles.attachThumbWrap}>
+              <Image
+                source={{ uri: pendingImage.previewUri }}
+                style={styles.attachThumb}
+                resizeMode="cover"
+              />
+              <Pressable
+                onPress={() => setPendingImage(null)}
+                hitSlop={8}
+                style={styles.attachRemove}
+                accessibilityLabel="Remove attached image"
+              >
+                <Text style={styles.attachRemoveText}>{'×'}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.attachInfo}>
+              <Text style={styles.attachName} numberOfLines={1}>
+                {pendingImage.filename}
+              </Text>
+              <Text style={styles.attachMeta} numberOfLines={1}>
+                {formatBytes(pendingImage.sizeBytes)} · sent to{' '}
+                {getModelById(selectedModel)?.label ?? 'a vision model'}
+              </Text>
+            </View>
+          </View>
+        ) : picking ? (
+          <Text style={styles.attachHint}>Uploading image…</Text>
+        ) : null}
+
         {/* Composer */}
         <View style={styles.composer}>
+          {!isImageModel ? (
+            <Pressable
+              disabled={picking || isStreaming}
+              onPress={pickImage}
+              style={({ pressed }) => [
+                styles.attachBtn,
+                (picking || isStreaming) && { opacity: 0.45 },
+                pressed && { opacity: 0.7 },
+              ]}
+              accessibilityLabel={pendingImage ? 'Replace attached image' : 'Attach an image'}
+            >
+              <Text style={styles.attachBtnText}>{picking ? '…' : '＋'}</Text>
+            </Pressable>
+          ) : null}
           <TextInput
             style={styles.input}
             placeholder={isImageModel ? 'Describe the image…' : 'Message'}
@@ -541,7 +698,12 @@ export default function ChatScreen({ route, navigation }: Props) {
             </Pressable>
           ) : (
             <Pressable
-              style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.8 }]}
+              disabled={picking}
+              style={({ pressed }) => [
+                styles.sendBtn,
+                picking && { opacity: 0.45 },
+                pressed && { opacity: 0.8 },
+              ]}
               onPress={handleSend}
               accessibilityLabel="Send"
             >
@@ -573,6 +735,7 @@ export default function ChatScreen({ route, navigation }: Props) {
               ]}
               onPress={() => {
                 setSelectedModel(m.id);
+                if (m.kind === 'image') setPendingImage(null);
                 closePanel();
               }}
             >
@@ -586,7 +749,11 @@ export default function ChatScreen({ route, navigation }: Props) {
                   </Text>
                 ) : null}
               </View>
-              {m.kind === 'image' ? <Text style={styles.panelBadge}>{'IMG'}</Text> : null}
+              {m.kind === 'image' ? (
+                <Text style={styles.panelBadge}>{'IMG'}</Text>
+              ) : m.vision ? (
+                <Text style={styles.panelBadge}>{'VIS'}</Text>
+              ) : null}
               {m.id === selectedModel ? <Text style={styles.check}>{'✓'}</Text> : null}
             </Pressable>
           ))}
@@ -599,6 +766,38 @@ export default function ChatScreen({ route, navigation }: Props) {
 /** Removes markdown bold markers (and stray **) that models emit in plain text. */
 function stripMarkdown(text: string): string {
   return text.replace(/\*\*([^*]*)\*\*/g, '$1').replace(/\*\*/g, '');
+}
+
+/** Local data URIs and stored (presigned) images can both be saved to the gallery. */
+function canSaveImage(uri: string): boolean {
+  return uri.startsWith('data:') || uri.startsWith('http://') || uri.startsWith('https://');
+}
+
+/** Compact attachment size for the composer chip. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return 'image';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Whether a persisted message already covers an optimistic one.
+ *
+ * User messages match by role+content: the server assigns a different id than
+ * the local placeholder, and an attached photo must not block the match (the
+ * polled copy has a presigned URL instead of the local preview). Assistant
+ * images match only by id: their URLs are regenerated per request, and an
+ * older image reply also has empty content, so either check alone would hide
+ * or duplicate the new render.
+ */
+function isSameMessage(pending: ChatMessage, persisted: ChatMessage): boolean {
+  if (pending.id === persisted.id) return true;
+  if (pending.role === 'user') {
+    return persisted.role === 'user' && pending.content === persisted.content;
+  }
+  if (pending.imageUri || persisted.imageUri) return false;
+  return pending.role === persisted.role && pending.content === persisted.content;
 }
 
 /** Manual HH:MM am/pm — avoids Hermes Intl quirks on some Android devices. */
@@ -776,6 +975,57 @@ const createStyles = (colors: ThemeColors) =>
     ratioChipActive: { backgroundColor: colors.accent, borderColor: colors.accentGlow },
     ratioChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
     ratioChipTextActive: { color: colors.textPrimary },
+    attachRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: spacing.md,
+      marginBottom: spacing.xs,
+      padding: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
+      backgroundColor: colors.surfaceMuted,
+    },
+    attachThumbWrap: { position: 'relative' },
+    attachThumb: {
+      width: 52,
+      height: 52,
+      borderRadius: radius.sm,
+      backgroundColor: colors.surface,
+    },
+    attachRemove: {
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bgBaseAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    attachRemoveText: { color: colors.textPrimary, fontSize: 13, lineHeight: 15 },
+    attachInfo: { flex: 1, marginLeft: spacing.sm },
+    attachName: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+    attachMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+    attachHint: {
+      color: colors.textMuted,
+      fontSize: 12,
+      textAlign: 'center',
+      marginBottom: spacing.xs,
+    },
+    attachBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 2,
+      marginBottom: Platform.OS === 'ios' ? 2 : 3,
+    },
+    attachBtnText: { color: colors.textSecondary, fontSize: 22, lineHeight: 24, marginTop: -2 },
     composer: {
       flexDirection: 'row',
       alignItems: 'flex-end',

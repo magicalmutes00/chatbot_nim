@@ -103,6 +103,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Overridden to "true" for debug builds below: the local dev backend is
+        // plain HTTP. Release builds require an HTTPS BACKEND_URL.
+        manifestPlaceholders = [usesCleartextTraffic: "false"]
     }
     // CMake >= 3.31 bundles a long-path-aware ninja, required on Windows when
     // codegen object paths exceed MAX_PATH (260 chars).
@@ -130,6 +133,8 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Android 9+ blocks cleartext traffic; the dev API is HTTP.
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
         }
         release {
             // Real release keystore when available; falls back to debug for CI.

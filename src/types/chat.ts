@@ -11,6 +11,14 @@ export interface ChatMessage {
   createdAt: number; // ms epoch, mirrors Firestore serverTimestamp on read
 }
 
+/** Metadata for a file already stored in S3 (see `POST /api/attachments/upload-url`). */
+export interface ChatAttachment {
+  key: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
 export interface Chat {
   id: string;
   title: string;

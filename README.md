@@ -1,111 +1,111 @@
-# NimChatApp — starter code
+# Trisentric AI — mobile client (`chatbot_nim`)
 
-This is the JS/TS source layer for the app described in the spec: a bare React
-Native (CLI, not Expo) app that chats with NVIDIA NIM models and persists
-history per-user in Firebase.
+Bare React Native (CLI) client for the Aurora/Trisentric backend. It streams
+replies from the Fastify API in `../personal-ai-assistant`, which holds the
+NVIDIA NIM key, Neon Postgres history, S3 files, memory, and tasks.
 
-**This bundle is source files only** — it does not include the native
-`ios/`/`android/` project folders, since generating and building those
-requires the React Native CLI, Xcode/CocoaPods, and the Android SDK, none of
-which are available in the environment that generated this code. Follow the
-steps below on your own machine to get a runnable project.
+## Requirements
 
-## 1. Initialize the native project
+- Node 20+, npm
+- Android Studio + SDK (Android), or Xcode + CocoaPods on macOS (iOS)
+- The backend running on port `8787` (see `../personal-ai-assistant/README.md`)
 
-```bash
-npx @react-native-community/cli init NimChatApp --template react-native-template-typescript
-cd NimChatApp
-```
-
-Then copy everything from this bundle (`App.tsx`, `src/`, `firestore.rules`,
-`.env.example`) into the freshly generated project, overwriting the
-placeholder `App.tsx`.
-
-## 2. Install dependencies
+## 1. Install
 
 ```bash
-npm install @react-navigation/native @react-navigation/native-stack \
-  react-native-screens react-native-safe-area-context react-native-gesture-handler \
-  @react-native-firebase/app @react-native-firebase/auth @react-native-firebase/firestore \
-  zustand react-native-config
+npm install
 
+# iOS only
 cd ios && pod install && cd ..
 ```
 
-## 3. Wire up native Firebase
+`react-native-image-picker` is a native module: after installing, rebuild the
+Android/iOS app (Metro alone is not enough). On iOS the photo-library prompt
+text lives in `ios/NimChatApp/Info.plist`
+(`NSPhotoLibraryUsageDescription`).
 
-1. Create a Firebase project (or reuse one), enable **Email/Password** auth
-   under Authentication → Sign-in method, and create a Firestore database.
-2. Download `google-services.json` from the Firebase console and place it at
-   `android/app/google-services.json`.
-3. Download `GoogleService-Info.plist` and add it to the Xcode project (drag
-   into the `ios/NimChatApp` group in Xcode so it's included in the target).
-4. Follow the RNFirebase native install steps for both platforms (Gradle
-   plugin + `google-services` classpath on Android, pod install already done
-   for iOS): https://rnfirebase.io/
+## 2. Configure Firebase Auth
 
-## 4. Add your NVIDIA API key
+The app uses the Firebase project `nimchatapp-90bc8` for email/password and
+Google Sign-In. In Firebase → Authentication → Sign-in method enable
+**Email/Password** and **Google**.
+
+- Android: `android/app/google-services.json` (already present)
+- iOS: `ios/NimChatApp/GoogleService-Info.plist` (already present, add it to the
+  `NimChatApp` target in Xcode if it isn't listed there)
+
+Then copy the environment file and fill in the OAuth **Web** client id (public
+identifier, found in Firebase → Project settings → General, or as
+`"client_type": 3` in `google-services.json`):
 
 ```bash
 cp .env.example .env
-# edit .env and paste your key
+# GOOGLE_WEB_CLIENT_ID=927019487925-...apps.googleusercontent.com
 ```
 
-`.env` is already covered by the default RN `.gitignore` pattern for
-dotfiles — double check it's actually listed before committing.
+`react-native-config` is wired into `android/app/build.gradle`; rebuild the
+native app after changing `.env`.
 
-You'll also need `react-native-config`'s native setup (Android: apply its
-Gradle plugin in `android/app/build.gradle`; iOS: add the Config build phase)
-per https://github.com/lugg/react-native-config#setup — this is required for
-`Config.NVIDIA_API_KEY` to resolve at runtime.
+iOS also needs the reversed client id as a URL scheme. It is already declared in
+`ios/NimChatApp/Info.plist` as
+`com.googleusercontent.apps.927019487925-rh96075ljq5nlmsbhistktkb6ehlqm9e`.
+Replace it if you point at a different Firebase project.
 
-## 5. Deploy Firestore rules
+## 3. Point at the backend
+
+Defaults:
+
+- Android emulator: `http://10.0.2.2:8787`
+- iOS simulator: `http://localhost:8787`
+
+For a physical device, set `BACKEND_URL` in `.env` to the machine's LAN address:
 
 ```bash
-firebase deploy --only firestore:rules
+BACKEND_URL=http://192.168.1.20:8787
 ```
 
-(requires the Firebase CLI and `firebase init` pointing at this project, or
-paste `firestore.rules` directly into the console's Rules tab)
+Debug Android builds allow cleartext HTTP for the local API. A release build
+needs an HTTPS `BACKEND_URL`.
 
-## 6. Run it
+## 4. Run
 
 ```bash
-npx react-native run-ios
-# or
-npx react-native run-android
+npm start          # Metro on 8082
+npm run android    # or: npm run ios
 ```
 
-## What's included vs. what's left
+## How auth and data flow
 
-**Included (this bundle):**
-- Email/password auth (login, signup, forgot password) via native RNFirebase
-- Auth-gated navigation (Auth stack vs Main stack)
-- Chat list screen (create, open, delete via long-press)
-- Chat screen: message bubbles, streaming assistant replies, model picker,
-  collapsible reasoning display
-- `nimClient.ts`: direct-from-client NIM streaming call with SSE parsing
-- Firestore read/write layer (`firestoreChats.ts`) matching the spec's data
-  model, plus `firestore.rules`
-- Zustand store for in-flight streaming UI state
+- `src/contexts/AuthContext.tsx` wraps React Native Firebase
+  (`onAuthStateChanged`, email/password, reset mail) and exchanges a Google ID
+  token with `signInWithCredential`.
+- Every API call attaches `Authorization: Bearer <Firebase ID token>`:
+  `src/api/backend.ts` exposes `backendFetch` for REST and `authHeaders` for the
+  streaming `XMLHttpRequest` in `src/api/nimClient.ts`.
+- The first chat turn creates the conversation server-side; the client adopts
+  `conversationId` from the `start` SSE event so later turns append to the same
+  chat. History is polled from `/api/conversations/:id/messages`.
+- Image models (`black-forest-labs/flux.1-dev`) post to
+  `/api/images/generate`; the backend renders, stores the JPEG in S3, and
+  returns a presigned URL plus the conversation id. Choose 1:1, 16:9, or 9:16
+  with the ratio chips above the composer.
+- The composer's **+** button attaches one photo: the picker hands the client
+  base64 (max 1600 px, JPEG quality 0.8), the client presigns
+  `/api/attachments/upload-url`, PUTs the bytes to S3, and sends the returned
+  key with the turn. Selecting a photo switches to a vision model
+  automatically (Nemotron Super VL 120B or MiniMax M3.1 Flash), and the image
+  reappears in history through the conversation poll. Removing an attachment
+  before sending leaves its uploaded object orphaned in S3 (same as the web
+  composer).
+- Voice, memories, and tasks live in the web/desktop client for now; the mobile
+  catalog exposes the chat, vision, and image models.
 
-**Left for you / flagged in comments:**
-- **RN streaming**: `nimClient.ts` streams via XMLHttpRequest incremental
-  delivery (`xhr.onprogress`), which works on every RN/Hermes version — no
-  dependency on `fetch` exposing a readable `response.body`. If you ever swap
-  back to fetch-based streaming, test early; that was the riskiest
-  native-platform assumption in the original spec.
-- Partial assistant replies are now persisted when a stream errors or is
-  aborted (e.g. navigating away mid-reply) instead of being dropped.
-- `deleteChat` chunks message deletions into batches under Firestore's
-  500-operation limit, so long chats delete cleanly.
-- Google Sign-In (spec marked this optional)
-- Advanced settings UI for temperature/top_p/max_tokens (currently hardcoded
-  per the spec's suggested defaults: temperature 1, top_p 0.95, max_tokens
-  4096)
-- Rename-chat UI (the service function `renameChat` exists; no screen wires
-  it to a text prompt yet)
-- Offline persistence config (RNFirebase supports it out of the box; needs a
-  one-line enable call if you want it — see RNFirebase docs)
-- Retry affordance on stream error beyond the visible error message
-"# chatbot_nim" 
+## Scripts
+
+```bash
+npm start       # Metro
+npm run android
+npm run ios
+npm run lint
+npm test
+```

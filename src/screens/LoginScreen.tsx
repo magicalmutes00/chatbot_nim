@@ -64,7 +64,7 @@ export default function LoginScreen({ navigation }: Props) {
         <LinearGradient colors={colors.heroGradient} style={styles.hero}>
           <Image source={Logo} style={styles.logoImage} resizeMode="contain" />
           <Text style={styles.brandSub}>
-            Chat with NVIDIA NIM models — {NIM_MODELS.length} available
+            Chat and create images with NVIDIA NIM — {NIM_MODELS.length} models
           </Text>
         </LinearGradient>
 

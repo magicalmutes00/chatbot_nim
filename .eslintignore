@@ -1,0 +1,5 @@
+personal-ai-assistant/
+node_modules/
+ios/Pods/
+android/build/
+android/app/build/

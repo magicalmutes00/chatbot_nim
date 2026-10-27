@@ -1,0 +1,47 @@
+name: Keep API awake
+
+# Render free instances sleep after 15 minutes without traffic, and the first
+# request after that takes ~50 s to cold-start. Ping the health endpoint on a
+# schedule so the API stays warm for chat, uploads and reminders.
+#
+# Notes:
+# - GitHub delays scheduled runs under load; a 10-minute cadence leaves room
+#   for the 15-minute idle window.
+# - Scheduled workflows in public repos are disabled after 60 days without
+#   repository activity. Any push re-enables them.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping /api/health
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for a healthy response
+        env:
+          HEALTH_URL: https://aurora-api-3q5p.onrender.com/api/health
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 120 "$HEALTH_URL" || echo 000)
+            echo "attempt $attempt -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              cat /tmp/health.json
+              echo
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::health check failed after 3 attempts"
+          exit 1

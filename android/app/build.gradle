@@ -102,7 +102,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName "0.1.0"
         // Overridden to "true" for debug builds below: the local dev backend is
         // plain HTTP. Release builds require an HTTPS BACKEND_URL.
         manifestPlaceholders = [usesCleartextTraffic: "false"]
